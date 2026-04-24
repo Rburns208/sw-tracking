@@ -181,31 +181,63 @@ const ASSESSMENT_BY_PATH = {
 // Form name catalog — canonical names used across generate_lead + form_start
 // + form_abandonment events
 // --------------------------------------------------------------------------
-// Keys are the Wix element ID of the form (update in Phase 3.3 after inspecting
-// the actual element IDs on the live site). Values are the canonical form_name.
+// Keys are the Wix Forms widget UUID (strip the `form-` prefix from the
+// container's DOM id). Values are the canonical form_name used across
+// form_start / form_abandonment / generate_lead events.
+// Populated in Phase 3.3 from a live crawl of scienceworkshealth.com.
 const FORM_NAME_BY_ID = {
-    // Main inquiry forms — one per page. IDs get filled in during Phase 3.3
-    // when each form is wired individually. Canonical names below are
-    // authoritative for now.
-    // '#wixFormXYZ': 'contact_main',
-    // '#wixFormABC': 'assessment_inquiry',
-    // etc.
+    // ---- Shared contact page (/contact) + reuse on sub-pages -----------
+    '34f61b44-208c-45bd-a3f3-d60372ff9578': 'therapy_consultation',    // /contact, /specialized-therapy, /ocd, /trauma, /insomnia
+    '08c9228f-3c88-403e-be5f-f337849d2494': 'booking_kiesa',           // /contact, /psychological-assessments (Wix Bookings widget)
+    '2195f02f-e8b3-44d9-a063-9a741cba6261': 'contact_general',         // /contact, /medication-management
+
+    // ---- Clinician-specific "Question" forms ---------------------------
+    '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'question_kiesa',          // /kiesakelly, /psychological-assessments
+    'e522454a-a18f-40e6-a532-aebe5daed5ea': 'question_laura',          // /laura-travers-heinig
+    'd0a38253-f880-402f-8487-ee52282b757d': 'question_catherine',      // /catherinecavin
+    'e9ea2c38-cdb6-4fe9-a3c3-6cc8d7c1d39b': 'question_kathryn',        // /kathryn-wood
+    '585c11e1-70a3-43f9-9ad2-094ad71c6793': 'question_ryan_robertson', // /ryan-robertson
+    'dfe4f28d-84a1-450e-a128-7a6edbf08bf6': 'question_shane',          // /executive-function-coaching (Shane, EF coach)
+
+    // ---- Condition-hub-specific contact forms --------------------------
+    'f763b0f8-7a7a-41d7-9b53-20e255b7fb54': 'contact_ocd',             // /ocd
+    '05ac8c0a-a579-4fe0-b510-9011052bcfb7': 'contact_trauma',          // /trauma
+    '36f23520-c3fe-461a-bd0c-9d5b82365265': 'contact_insomnia',        // /insomnia
+    'cf278b73-b8a3-4a13-a9c2-84c2d951076f': 'contact_groups',          // /groups (primary)
+    'eaac169f-1e15-4f73-992a-5c0bbfaa6f11': 'contact_groups_secondary',// /groups (second form — verify intent)
+
+    // ---- Careers -------------------------------------------------------
+    '8b77cff6-da02-4f58-8ac4-dfaf47625958': 'careers'                  // /careers
 };
 
 // Canonical form_name values, with form_type classification.
-// form_type: consult | inquiry | careers | clinician_contact | newsletter | other
+// form_type: consult | booking | inquiry | clinician_contact | careers | other
+// lead_value_estimate is used as the GA4 event `value` for generate_lead so
+// GA4 conversion reports show a dollar-weighted ranking instead of raw counts.
 const FORM_META = {
-    contact_main:                  { form_type: 'inquiry',           lead_value_estimate: 250 },
-    assessment_inquiry:            { form_type: 'inquiry',           lead_value_estimate: 250 },
-    therapy_inquiry:               { form_type: 'inquiry',           lead_value_estimate: 250 },
-    coaching_inquiry:              { form_type: 'inquiry',           lead_value_estimate: 250 },
-    screening_inquiry:             { form_type: 'inquiry',           lead_value_estimate: 250 },
-    careers:                       { form_type: 'careers',           lead_value_estimate: 0   },
-    clinician_kiesa_kelly:         { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_laura_travers_heinig:{ form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_catherine_cavin:     { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_kathryn_wood:        { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 }
+    // Consult + booking — highest intent
+    therapy_consultation:      { form_type: 'consult',           lead_value_estimate: 250 },
+    booking_kiesa:             { form_type: 'booking',           lead_value_estimate: 250 },
+
+    // General / condition inquiries
+    contact_general:           { form_type: 'inquiry',           lead_value_estimate: 200 },
+    contact_ocd:               { form_type: 'inquiry',           lead_value_estimate: 200 },
+    contact_trauma:            { form_type: 'inquiry',           lead_value_estimate: 200 },
+    contact_insomnia:          { form_type: 'inquiry',           lead_value_estimate: 200 },
+    contact_groups:            { form_type: 'inquiry',           lead_value_estimate: 200 },
+    contact_groups_secondary:  { form_type: 'inquiry',           lead_value_estimate: 200 },
+
+    // Clinician-specific "Question" forms
+    question_kiesa:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    question_laura:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    question_catherine:        { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    question_kathryn:          { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    question_ryan_robertson:   { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    question_shane:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
+
+    // Careers + catch-all
+    careers:                   { form_type: 'careers',           lead_value_estimate: 0   },
+    unknown_form:              { form_type: 'other',             lead_value_estimate: 0   }
 };
 
 // --------------------------------------------------------------------------
@@ -1161,6 +1193,16 @@ function getAllCounts() {
         if (!firstTouchWasAlreadySet) {
             sw_push('sw_first_visit', {});
         }
+
+        // -- Phase 3.3: Forms ---------------------------------------------
+        // generate_lead fires on /confirmation (the single success URL for
+        // every Wix form on the site), keyed off sessionStorage attribution
+        // written when the user clicked submit. Abandonment + form_start
+        // listeners get wired once per page load; SPA-nav re-bootstrap
+        // re-wires for new-page forms.
+        try { maybeFireGenerateLead(normalizedPath); } catch (e) { /* non-fatal */ }
+        try { initFormListenersWhenReady();         } catch (e) { /* non-fatal */ }
+        try { initFormAbandonmentListeners();       } catch (e) { /* non-fatal */ }
     }
 
     // ------------------------------------------------------------------------
@@ -1237,5 +1279,286 @@ function getAllCounts() {
     // directly; they go through sw_push.
     // ------------------------------------------------------------------------
     window.sw_push = sw_push;
+
+
+    // ====== sw-forms ======
+// ============================================================================
+// sw-forms.js — Form interaction listeners (form_start, generate_lead, form_abandonment)
+// ============================================================================
+// Wix Forms widget renders containers with DOM id `form-{UUID}` and an
+// `aria-label` attribute equal to the form's configured name. The submit
+// button on Wix forms is `type="button"` (not `type="submit"`), so the
+// standard `submit` event cannot be observed. On successful submit, Wix
+// performs a hard page navigation to `/confirmation` — verified via live
+// site crawl on Apr 24 2026. This module exploits both facts:
+//
+//   1. form_start       — first user interaction with a form container
+//                         (focusin / input / change). One-shot per form_id
+//                         per page load. Writes attribution to sessionStorage.
+//
+//   2. generate_lead    — fired by bootstrap when page_path === '/confirmation'.
+//                         Reads sessionStorage for a recent submit-click that
+//                         occurred inside a form container, and attributes
+//                         the lead to form_name / form_type / service_context.
+//                         If no pending submit is present, fires a fallback
+//                         generate_lead with form_name = 'unknown_form' so
+//                         GA4 conversion counts stay complete.
+//
+//   3. form_abandonment — fired on beforeunload / visibilitychange (hidden) /
+//                         SPA nav-away-from-/contact-style-page when a
+//                         form_start was recorded without a following submit.
+//                         Suppressed when a pending-submit record exists
+//                         (avoids false positives on the submit-nav path).
+//
+// sessionStorage keys:
+//   sw_form_active          — { form_id, form_name, form_type,
+//                               lead_value_estimate, service_context,
+//                               ts_ms, fields_interacted, _abandoned_fired }
+//   sw_form_pending_submit  — { form_id, form_name, form_type,
+//                               lead_value_estimate, service_context,
+//                               click_ts_ms }
+//
+// The `_sw_attribution_source` debug dimension on generate_lead lets us
+// separate well-attributed leads from confirmation-page fallbacks in GA4.
+// ============================================================================
+
+const SW_FORM_ACTIVE_KEY         = 'sw_form_active';
+const SW_FORM_PENDING_SUBMIT_KEY = 'sw_form_pending_submit';
+const SW_FORM_SUBMIT_WINDOW_MS   = 10000;   // submit-click -> /confirmation nav budget
+const SW_FORM_ABANDON_MIN_AGE_MS = 1500;    // ignore abandonments under 1.5s (page churn)
+
+// ----- Helpers -----------------------------------------------------------
+
+// Map a Wix form container to a canonical form_name. Prefer the UUID lookup
+// (FORM_NAME_BY_ID); fall back to a normalized aria-label; final fallback is
+// 'unknown_form' so downstream code has a stable key.
+function resolveFormName(containerEl) {
+    if (!containerEl) return 'unknown_form';
+    const id = containerEl.id || '';
+    const uuid = id.replace(/^form-/, '');
+    if (uuid && FORM_NAME_BY_ID[uuid]) return FORM_NAME_BY_ID[uuid];
+    const label = (containerEl.getAttribute && containerEl.getAttribute('aria-label') || '').trim();
+    if (label) {
+        return label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+    return 'unknown_form';
+}
+
+function resolveFormMeta(formName) {
+    return FORM_META[formName] || FORM_META.unknown_form || { form_type: 'other', lead_value_estimate: 0 };
+}
+
+// Snapshot the current page_context for form attribution. Travels with the
+// form across page nav via sessionStorage so generate_lead knows which
+// service/clinician/assessment the user was viewing when they converted.
+function buildFormServiceContext() {
+    const ctx = window.__sw_context || {};
+    return {
+        service_name:        ctx.service_name        || '',
+        service_category:    ctx.service_category    || '',
+        clinician_name:      ctx.clinician_name      || '',
+        clinician_role:      ctx.clinician_role      || '',
+        assessment_name:     ctx.assessment_name     || '',
+        page_type_at_form:   ctx.page_type           || '',
+        page_path_at_form:   ctx.page_path           || ''
+    };
+}
+
+// ----- form_start --------------------------------------------------------
+// In-memory per-page-load dedupe — form_start fires at most once per
+// form_id. A fresh page load clears this flag by nature.
+function handleFormStart(containerEl) {
+    if (!containerEl || containerEl.__sw_form_started) return;
+    containerEl.__sw_form_started = true;
+
+    const formId   = containerEl.id || '';
+    const formName = resolveFormName(containerEl);
+    const meta     = resolveFormMeta(formName);
+    const svcCtx   = buildFormServiceContext();
+
+    sw_push('form_start', Object.assign(
+        { form_name: formName, form_id: formId, form_type: meta.form_type },
+        svcCtx
+    ));
+
+    writeJSON('session', SW_FORM_ACTIVE_KEY, {
+        form_id:               formId,
+        form_name:             formName,
+        form_type:             meta.form_type,
+        lead_value_estimate:   meta.lead_value_estimate,
+        service_context:       svcCtx,
+        ts_ms:                 Date.now(),
+        fields_interacted:     1,
+        _abandoned_fired:      false
+    });
+}
+
+function handleFormFieldInteraction() {
+    const active = readJSON('session', SW_FORM_ACTIVE_KEY, null);
+    if (!active) return;
+    active.fields_interacted = (active.fields_interacted || 0) + 1;
+    writeJSON('session', SW_FORM_ACTIVE_KEY, active);
+}
+
+// ----- submit-click capture ---------------------------------------------
+// Wix submit buttons are type="button", so we listen for button clicks
+// inside the form container. Heuristic ignores cancel/close/reset buttons.
+function handleFormSubmitClick(containerEl) {
+    const active   = readJSON('session', SW_FORM_ACTIVE_KEY, null);
+    const formName = (active && active.form_name) || resolveFormName(containerEl);
+    const meta     = resolveFormMeta(formName);
+    const svcCtx   = (active && active.service_context) || buildFormServiceContext();
+
+    writeJSON('session', SW_FORM_PENDING_SUBMIT_KEY, {
+        form_id:              containerEl.id || (active && active.form_id) || '',
+        form_name:            formName,
+        form_type:            meta.form_type,
+        lead_value_estimate:  meta.lead_value_estimate,
+        service_context:      svcCtx,
+        click_ts_ms:          Date.now()
+    });
+}
+
+// ----- generate_lead (called from bootstrap on /confirmation) ----------
+function maybeFireGenerateLead(currentPath) {
+    if (currentPath !== '/confirmation') return;
+
+    const pending = readJSON('session', SW_FORM_PENDING_SUBMIT_KEY, null);
+
+    if (!pending) {
+        // Confirmation-page fallback: user landed here without a tracked
+        // submit (deep link, refresh, or a submit we failed to instrument).
+        // Still fire generate_lead so GA4 conversion counts stay complete.
+        sw_push('generate_lead', {
+            form_name:               'unknown_form',
+            form_type:               'other',
+            lead_value_estimate:     0,
+            currency:                'USD',
+            value:                   0,
+            _sw_attribution_source:  'confirmation_page_fallback'
+        });
+        return;
+    }
+
+    const age = Date.now() - (pending.click_ts_ms || 0);
+    const stale = age > SW_FORM_SUBMIT_WINDOW_MS;
+
+    sw_push('generate_lead', Object.assign({
+        form_name:               pending.form_name,
+        form_id:                 pending.form_id,
+        form_type:               pending.form_type,
+        lead_value_estimate:     pending.lead_value_estimate,
+        currency:                'USD',
+        value:                   pending.lead_value_estimate || 0,
+        _sw_attribution_source:  stale ? 'submit_click_stale' : 'submit_click_attribution'
+    }, pending.service_context || {}));
+
+    // Clear both keys — the journey is complete.
+    try { window.sessionStorage.removeItem(SW_FORM_PENDING_SUBMIT_KEY); } catch (e) {}
+    try { window.sessionStorage.removeItem(SW_FORM_ACTIVE_KEY);         } catch (e) {}
+}
+
+// ----- form_abandonment -------------------------------------------------
+// Called from beforeunload, visibilitychange (hidden), and SPA nav-away.
+// Suppressed when a pending-submit record exists so the submit-nav path
+// doesn't double-fire abandonment + generate_lead.
+function maybeFireFormAbandonment(reason) {
+    const active = readJSON('session', SW_FORM_ACTIVE_KEY, null);
+    if (!active) return;
+    if (active._abandoned_fired) return;
+
+    const pending = readJSON('session', SW_FORM_PENDING_SUBMIT_KEY, null);
+    if (pending) {
+        const age = Date.now() - (pending.click_ts_ms || 0);
+        if (age <= SW_FORM_SUBMIT_WINDOW_MS) return;  // submit in flight — wait for /confirmation
+    }
+
+    const timeInForm = Date.now() - (active.ts_ms || Date.now());
+    if (timeInForm < SW_FORM_ABANDON_MIN_AGE_MS) return;  // too quick — probably page-churn noise
+
+    active._abandoned_fired = true;
+    writeJSON('session', SW_FORM_ACTIVE_KEY, active);
+
+    sw_push('form_abandonment', Object.assign({
+        form_name:                active.form_name,
+        form_id:                  active.form_id,
+        form_type:                active.form_type,
+        fields_interacted_count:  active.fields_interacted || 0,
+        time_in_form_ms:          timeInForm,
+        abandonment_reason:       reason
+    }, active.service_context || {}));
+
+    try { window.sessionStorage.removeItem(SW_FORM_ACTIVE_KEY); } catch (e) {}
+}
+
+// ----- Listener wiring --------------------------------------------------
+function wireFormContainer(c) {
+    if (!c || c.__sw_forms_wired) return;
+    c.__sw_forms_wired = true;
+
+    // First interaction -> form_start. Capture phase so we see focus events
+    // inside Wix's nested inputs.
+    c.addEventListener('focusin', function () { handleFormStart(c); }, true);
+    c.addEventListener('input',   function () { handleFormStart(c); handleFormFieldInteraction(); }, true);
+    c.addEventListener('change',  function () { handleFormStart(c); handleFormFieldInteraction(); }, true);
+
+    // Submit-click capture. Wix uses type="button" buttons, so we key off
+    // any button click within the container and reject obvious non-submit
+    // controls by text content.
+    c.addEventListener('click', function (ev) {
+        const t = ev.target;
+        if (!t) return;
+        const btn = (t.closest && (t.closest('button') || t.closest('[role="button"]'))) || null;
+        if (!btn) return;
+        const txt = (btn.textContent || '').trim().toLowerCase();
+        if (/^(cancel|close|reset|back|x)$/.test(txt)) return;
+        handleFormSubmitClick(c);
+    }, true);
+}
+
+function initFormListeners() {
+    try {
+        const containers = document.querySelectorAll('[id^="form-"]');
+        for (let i = 0; i < containers.length; i++) wireFormContainer(containers[i]);
+    } catch (e) { /* non-fatal */ }
+}
+
+// Deferred init — DOM isn't parsed yet when the HEAD script runs. Also re-
+// runs on SPA nav so new-page forms get wired after Wix in-site navigation.
+function initFormListenersWhenReady() {
+    if (typeof document === 'undefined') return;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFormListeners, { once: true });
+    } else {
+        initFormListeners();
+    }
+}
+
+function initFormAbandonmentListeners() {
+    if (window.__sw_form_abandonment_wired) return;
+    window.__sw_form_abandonment_wired = true;
+
+    window.addEventListener('beforeunload', function () {
+        maybeFireFormAbandonment('beforeunload');
+    });
+
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') {
+            maybeFireFormAbandonment('visibility_hidden');
+        }
+    });
+
+    window.addEventListener('sw:navigate', function () {
+        // SPA nav: if user moves off the form page without submitting,
+        // that's abandonment. Slight delay so the new page_path is settled.
+        setTimeout(function () {
+            const p = (window.location && window.location.pathname || '').toLowerCase().replace(/\/$/, '') || '/';
+            if (p === '/confirmation') return;  // success path, not abandonment
+            maybeFireFormAbandonment('spa_navigate');
+            // After nav, re-scan for form containers on the new page.
+            initFormListeners();
+        }, 50);
+    });
+}
 
 })();
