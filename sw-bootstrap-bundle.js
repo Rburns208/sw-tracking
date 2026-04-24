@@ -1329,19 +1329,23 @@ const SW_FORM_ABANDON_MIN_AGE_MS = 1500;    // ignore abandonments under 1.5s (p
 
 // ----- Helpers -----------------------------------------------------------
 
-// Map a Wix form container to a canonical form_name. Prefer the UUID lookup
-// (FORM_NAME_BY_ID); fall back to a normalized aria-label; final fallback is
-// 'unknown_form' so downstream code has a stable key.
+// Map a Wix form container to a canonical form_name. STRICT: the container
+// id must match /^form-{UUID}$/ exactly (excludes Wix field wrappers like
+// form-field-input-*, form-field-label-*, form-field-error-*) AND the UUID
+// must be registered in FORM_NAME_BY_ID. Returns null for anything that
+// doesn't qualify — callers should bail early on null.
+//
+// Why strict: the [id^="form-"] DOM selector used by initFormListeners is
+// deliberately broad to survive Wix's async hydration. resolveFormName is
+// the gate that prevents field wrappers and unregistered forms from
+// generating form_start / form_abandonment / generate_lead noise.
 function resolveFormName(containerEl) {
-    if (!containerEl) return 'unknown_form';
+    if (!containerEl) return null;
     const id = containerEl.id || '';
-    const uuid = id.replace(/^form-/, '');
-    if (uuid && FORM_NAME_BY_ID[uuid]) return FORM_NAME_BY_ID[uuid];
-    const label = (containerEl.getAttribute && containerEl.getAttribute('aria-label') || '').trim();
-    if (label) {
-        return label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    }
-    return 'unknown_form';
+    const m = id.match(/^form-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+    if (!m) return null;
+    const uuid = m[1].toLowerCase();
+    return FORM_NAME_BY_ID[uuid] || null;
 }
 
 function resolveFormMeta(formName) {
@@ -1369,10 +1373,11 @@ function buildFormServiceContext() {
 // form_id. A fresh page load clears this flag by nature.
 function handleFormStart(containerEl) {
     if (!containerEl || containerEl.__sw_form_started) return;
+    const formName = resolveFormName(containerEl);
+    if (!formName) return;  // registered-UUIDs only
     containerEl.__sw_form_started = true;
 
     const formId   = containerEl.id || '';
-    const formName = resolveFormName(containerEl);
     const meta     = resolveFormMeta(formName);
     const svcCtx   = buildFormServiceContext();
 
@@ -1406,6 +1411,7 @@ function handleFormFieldInteraction() {
 function handleFormSubmitClick(containerEl) {
     const active   = readJSON('session', SW_FORM_ACTIVE_KEY, null);
     const formName = (active && active.form_name) || resolveFormName(containerEl);
+    if (!formName) return;  // registered-UUIDs only
     const meta     = resolveFormMeta(formName);
     const svcCtx   = (active && active.service_context) || buildFormServiceContext();
 
@@ -1494,6 +1500,8 @@ function maybeFireFormAbandonment(reason) {
 // ----- Listener wiring --------------------------------------------------
 function wireFormContainer(c) {
     if (!c || c.__sw_forms_wired) return;
+    // registered-UUIDs-only: bail on Wix field wrappers and unregistered forms
+    if (!resolveFormName(c)) return;
     c.__sw_forms_wired = true;
 
     // First interaction -> form_start. Capture phase so we see focus events
@@ -1523,14 +1531,65 @@ function initFormListeners() {
     } catch (e) { /* non-fatal */ }
 }
 
-// Deferred init — DOM isn't parsed yet when the HEAD script runs. Also re-
-// runs on SPA nav so new-page forms get wired after Wix in-site navigation.
+// Deferred init — DOM isn't parsed yet when the HEAD script runs, AND Wix
+// hydrates its Forms widget ASYNCHRONOUSLY after that. A single scan at
+// DOMContentLoaded misses most forms. Empirically, on /contact a single
+// post-DCL scan found 0 of 40 form containers (they were rendered later).
+//
+// Strategy:
+//   1. Scan at DOMContentLoaded (or immediately if already past).
+//   2. Scan again on window.load and on a short timer ladder
+//      (500 / 1500 / 3500 ms) to cover slow Wix hydration.
+//   3. MutationObserver on document.body so any form node added at any
+//      later time (modal open, SPA nav, lazy load) gets wired on insertion.
+//      Debounced with rAF to keep CPU cost trivial.
+//
+// wireFormContainer is doubly idempotent (the __sw_forms_wired property
+// guard AND the resolveFormName registered-UUIDs filter), so re-scans are
+// effectively free.
 function initFormListenersWhenReady() {
     if (typeof document === 'undefined') return;
+
+    // 1. Immediate / DOMContentLoaded scan
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initFormListeners, { once: true });
     } else {
         initFormListeners();
+    }
+
+    // 2. window.load + timer ladder — belt-and-suspenders for Wix hydration
+    if (window.addEventListener) {
+        window.addEventListener('load', initFormListeners);
+    }
+    try { setTimeout(initFormListeners,  500); } catch (e) {}
+    try { setTimeout(initFormListeners, 1500); } catch (e) {}
+    try { setTimeout(initFormListeners, 3500); } catch (e) {}
+
+    // 3. MutationObserver on document.body — catches late-added nodes.
+    //    Runs for the life of the page so SPA nav / modal open / lazy load
+    //    all flow through here. Debounced via rAF.
+    function setupObserver() {
+        if (!document.body || typeof MutationObserver !== 'function') return;
+        if (window.__sw_forms_observer_installed) return;
+        window.__sw_forms_observer_installed = true;
+        let pending = false;
+        const rAF = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 16); };
+        const obs = new MutationObserver(function () {
+            if (pending) return;
+            pending = true;
+            rAF(function () {
+                pending = false;
+                try { initFormListeners(); } catch (e) { /* non-fatal */ }
+            });
+        });
+        try {
+            obs.observe(document.body, { childList: true, subtree: true });
+        } catch (e) { /* non-fatal */ }
+    }
+    if (document.body) {
+        setupObserver();
+    } else {
+        document.addEventListener('DOMContentLoaded', setupObserver, { once: true });
     }
 }
 
