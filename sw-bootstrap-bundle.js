@@ -1203,6 +1203,17 @@ function getAllCounts() {
         try { maybeFireGenerateLead(normalizedPath); } catch (e) { /* non-fatal */ }
         try { initFormListenersWhenReady();         } catch (e) { /* non-fatal */ }
         try { initFormAbandonmentListeners();       } catch (e) { /* non-fatal */ }
+
+        // -- Phase 3.4: Screeners ---------------------------------------
+        // The screener tools at /asrs, /y-bocs, /aq-10, /esq-r, /phq-9,
+        // /gad-7 run inside Wix HTML embed iframes hosted on
+        // *.filesusr.com -- cross-origin to the parent page. The bundle
+        // cannot reach into those iframes, so each screener's HTML embed
+        // is responsible for posting a message to the parent on submit;
+        // this listener catches it and forwards as
+        // assessment_score_interaction. Idempotent -- safe to call on
+        // every SPA-nav re-bootstrap.
+        try { initScreenerListener();              } catch (e) { /* non-fatal */ }
     }
 
     // ------------------------------------------------------------------------
@@ -1618,6 +1629,140 @@ function initFormAbandonmentListeners() {
             initFormListeners();
         }, 50);
     });
+}
+
+    // ====== sw-screeners ======
+// ============================================================================
+// sw-screeners.js — Phase 3.4
+// Listener for assessment_score_interaction events from screener iframes
+// ============================================================================
+// The screener tools at /y-bocs, /asrs, /aq-10, /esq-r, /phq-9, /gad-7 are
+// each rendered as a Wix HTML embed widget -- a cross-origin iframe whose
+// `src` points at https://www-scienceworkshealth-com.filesusr.com/html/<hash>.html.
+// The parent bundle CANNOT read into those iframes (browser cross-origin
+// boundary, not a Wix limitation). The only viable path to fire
+// assessment_score_interaction is for each screener's HTML embed source to
+// call `parent.postMessage(...)` on score submission, and for the bundle to
+// listen on the parent.
+//
+// Emitter contract (paste at the bottom of each screener's "Calculate Score"
+// handler -- see phase3-artifacts/screener-emitter-snippet.md for templates):
+//
+//   parent.postMessage({
+//       sw_event: 'assessment_score_interaction',
+//       score_value: <number>,                              // raw score
+//       score_band: 'minimal' | 'mild' | 'moderate' | 'severe',
+//       items_completed: <number>,                          // optional
+//       time_to_complete_seconds: <number>                  // optional
+//   }, 'https://www.scienceworkshealth.com');
+//
+// Emitters do NOT send assessment_name / assessment_category /
+// assessment_age_range -- those are looked up on the parent side from
+// ASSESSMENT_BY_PATH using the parent page's pathname. This keeps each
+// screener's emitter snippet identical regardless of which screener it's in.
+//
+// Defenses:
+//   1. Origin allowlist -- only messages from
+//      https://www-scienceworkshealth-com.filesusr.com pass. All other
+//      origins (and the special string "null" for sandboxed iframes) are
+//      silently dropped.
+//   2. Schema gate -- data must be an object with sw_event ===
+//      'assessment_score_interaction'. score_value must be a finite number;
+//      score_band must be one of the four canonical bands.
+//   3. Path gate -- the parent must currently be on a known screener path
+//      (one of the keys in ASSESSMENT_BY_PATH). A message arriving on, say,
+//      /home is dropped (defensive: a stray message from any iframe, even
+//      non-screener, is ignored unless we can confidently decorate it).
+//   4. Numeric clamps -- score_value 0..1000, items_completed 0..1000,
+//      time_to_complete_seconds 0..7200. Defends against bad emitter math.
+//   5. Dedupe -- identical payload within 1500ms is dropped (defends
+//      against double-fire if an emitter accidentally invokes postMessage
+//      twice for the same score).
+//
+// Observability (window globals, useful for the smoke-test one-liner in
+// REFERENCE.md):
+//   window.__sw_screeners_listener_installed -- true once the message
+//                                               listener is attached
+//   window.__sw_screener_msgs_seen           -- counter of recognized
+//                                               sw_event messages (passes
+//                                               origin + schema gates)
+//   window.__sw_screener_last_event          -- last accepted payload
+//                                               { ts, path, payload }
+// ============================================================================
+
+const SW_SCREENER_ORIGIN     = 'https://www-scienceworkshealth-com.filesusr.com';
+const SW_SCREENER_BANDS      = ['minimal', 'mild', 'moderate', 'severe'];
+const SW_SCREENER_DEDUPE_MS  = 1500;
+var __sw_screener_last_sig   = '';
+var __sw_screener_last_ts    = 0;
+
+function handleScreenerMessage(e) {
+    // 1) Origin gate -- only Wix HTML embed iframe origin
+    if (!e || e.origin !== SW_SCREENER_ORIGIN) return;
+
+    // 2) Schema gate
+    const data = e.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.sw_event !== 'assessment_score_interaction') return;
+
+    // Recognized -- count it (observability), even if downstream gates fail
+    window.__sw_screener_msgs_seen = (window.__sw_screener_msgs_seen || 0) + 1;
+
+    // 3) Required field: score_value (finite number)
+    const score = Number(data.score_value);
+    if (!Number.isFinite(score)) return;
+
+    // 4) Required field: score_band (canonical 4-bucket taxonomy)
+    const band = String(data.score_band || '').toLowerCase();
+    if (SW_SCREENER_BANDS.indexOf(band) === -1) return;
+
+    // 5) Path gate + decoration
+    const path = (window.location && window.location.pathname || '').toLowerCase().replace(/\/$/, '') || '/';
+    const meta = ASSESSMENT_BY_PATH[path];
+    if (!meta) return;
+
+    // 6) Numeric clamps
+    function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
+    const scoreClamped = clamp(score, 0, 1000);
+    const itemsRaw     = Number(data.items_completed);
+    const items        = Number.isFinite(itemsRaw) ? clamp(itemsRaw, 0, 1000) : null;
+    const timeRaw      = Number(data.time_to_complete_seconds);
+    const seconds      = Number.isFinite(timeRaw) ? clamp(timeRaw, 0, 7200) : null;
+
+    // 7) Dedupe (same exact payload within 1.5s = drop)
+    const sig = path + '|' + scoreClamped + '|' + band + '|' + items + '|' + seconds;
+    const now = Date.now();
+    if (sig === __sw_screener_last_sig && (now - __sw_screener_last_ts) < SW_SCREENER_DEDUPE_MS) {
+        return;
+    }
+    __sw_screener_last_sig = sig;
+    __sw_screener_last_ts  = now;
+
+    // 8) Build payload + push
+    const payload = {
+        assessment_name:      meta.assessment_name,
+        assessment_category:  meta.assessment_category,
+        assessment_age_range: meta.assessment_age_range,
+        score_value: scoreClamped,
+        score_band:  band
+    };
+    if (items   !== null) payload.items_completed = items;
+    if (seconds !== null) payload.time_to_complete_seconds = seconds;
+
+    try {
+        sw_push('assessment_score_interaction', payload);
+        window.__sw_screener_last_event = { ts: now, path: path, payload: payload };
+    } catch (err) {
+        if (typeof console !== 'undefined') {
+            console.warn('[sw] screener push failed:', err);
+        }
+    }
+}
+
+function initScreenerListener() {
+    if (window.__sw_screeners_listener_installed) return;
+    window.__sw_screeners_listener_installed = true;
+    window.addEventListener('message', handleScreenerMessage);
 }
 
 })();
