@@ -1633,7 +1633,7 @@ function initFormAbandonmentListeners() {
 
     // ====== sw-screeners ======
 // ============================================================================
-// sw-screeners.js — Phase 3.4
+// sw-screeners.js — Phase 3.4 (Option-2 privacy posture, 2026-04-25)
 // Listener for assessment_score_interaction events from screener iframes
 // ============================================================================
 // The screener tools at /y-bocs, /asrs, /aq-10, /esq-r, /phq-9, /gad-7 are
@@ -1645,15 +1645,23 @@ function initFormAbandonmentListeners() {
 // call `parent.postMessage(...)` on score submission, and for the bundle to
 // listen on the parent.
 //
+// PRIVACY POSTURE (Option 2, locked 2026-04-25):
+//   This listener does NOT accept, log, or forward any of:
+//     - score_value  (the user's raw screener result)
+//     - score_band   (the categorical interpretation of the score)
+//   Even if a screener emitter sends those fields, this listener strips them.
+//   GA4, GTM, dataLayer -- nothing downstream of this listener ever sees a
+//   user's screener result. The event is a "completed-a-screener" funnel
+//   signal, not an outcome record.
+//
 // Emitter contract (paste at the bottom of each screener's "Calculate Score"
-// handler -- see phase3-artifacts/screener-emitter-snippet.md for templates):
+// handler -- see phase3-artifacts/screener-emitter-snippet.md for the
+// universal snippet, identical across all 6 screeners):
 //
 //   parent.postMessage({
 //       sw_event: 'assessment_score_interaction',
-//       score_value: <number>,                              // raw score
-//       score_band: 'minimal' | 'mild' | 'moderate' | 'severe',
-//       items_completed: <number>,                          // optional
-//       time_to_complete_seconds: <number>                  // optional
+//       items_completed: <number>,           // optional, total items answered
+//       time_to_complete_seconds: <number>   // optional, duration
 //   }, 'https://www.scienceworkshealth.com');
 //
 // Emitters do NOT send assessment_name / assessment_category /
@@ -1667,17 +1675,20 @@ function initFormAbandonmentListeners() {
 //      origins (and the special string "null" for sandboxed iframes) are
 //      silently dropped.
 //   2. Schema gate -- data must be an object with sw_event ===
-//      'assessment_score_interaction'. score_value must be a finite number;
-//      score_band must be one of the four canonical bands.
+//      'assessment_score_interaction'.
 //   3. Path gate -- the parent must currently be on a known screener path
 //      (one of the keys in ASSESSMENT_BY_PATH). A message arriving on, say,
 //      /home is dropped (defensive: a stray message from any iframe, even
 //      non-screener, is ignored unless we can confidently decorate it).
-//   4. Numeric clamps -- score_value 0..1000, items_completed 0..1000,
-//      time_to_complete_seconds 0..7200. Defends against bad emitter math.
-//   5. Dedupe -- identical payload within 1500ms is dropped (defends
-//      against double-fire if an emitter accidentally invokes postMessage
-//      twice for the same score).
+//   4. Score-strip -- if an emitter mistakenly sends `score_value` or
+//      `score_band`, those fields are NEVER read into the payload. A
+//      console.warn is emitted as a debuggability signal so the misconfigured
+//      emitter can be fixed -- the score values themselves are never logged.
+//   5. Numeric clamps -- items_completed 0..1000, time_to_complete_seconds
+//      0..7200. Defends against bad emitter math.
+//   6. Dedupe -- identical payload signature within 1500ms is dropped
+//      (defends against double-fire if an emitter accidentally invokes
+//      postMessage twice).
 //
 // Observability (window globals, useful for the smoke-test one-liner in
 // REFERENCE.md):
@@ -1691,7 +1702,6 @@ function initFormAbandonmentListeners() {
 // ============================================================================
 
 const SW_SCREENER_ORIGIN     = 'https://www-scienceworkshealth-com.filesusr.com';
-const SW_SCREENER_BANDS      = ['minimal', 'mild', 'moderate', 'severe'];
 const SW_SCREENER_DEDUPE_MS  = 1500;
 var __sw_screener_last_sig   = '';
 var __sw_screener_last_ts    = 0;
@@ -1708,29 +1718,29 @@ function handleScreenerMessage(e) {
     // Recognized -- count it (observability), even if downstream gates fail
     window.__sw_screener_msgs_seen = (window.__sw_screener_msgs_seen || 0) + 1;
 
-    // 3) Required field: score_value (finite number)
-    const score = Number(data.score_value);
-    if (!Number.isFinite(score)) return;
+    // 3) Score-strip defensive check.  If an emitter sent score data despite
+    // the contract, log a console warning (without leaking the values) and
+    // proceed -- the payload-build step below ignores those fields anyway.
+    if (('score_value' in data) || ('score_band' in data)) {
+        if (typeof console !== 'undefined') {
+            console.warn('[sw] screener emitter sent score data — fields ignored per privacy policy. Update the emitter to drop score_value and score_band.');
+        }
+    }
 
-    // 4) Required field: score_band (canonical 4-bucket taxonomy)
-    const band = String(data.score_band || '').toLowerCase();
-    if (SW_SCREENER_BANDS.indexOf(band) === -1) return;
-
-    // 5) Path gate + decoration
+    // 4) Path gate + decoration
     const path = (window.location && window.location.pathname || '').toLowerCase().replace(/\/$/, '') || '/';
     const meta = ASSESSMENT_BY_PATH[path];
     if (!meta) return;
 
-    // 6) Numeric clamps
+    // 5) Numeric clamps for the only two emitter-provided fields we accept
     function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
-    const scoreClamped = clamp(score, 0, 1000);
-    const itemsRaw     = Number(data.items_completed);
-    const items        = Number.isFinite(itemsRaw) ? clamp(itemsRaw, 0, 1000) : null;
-    const timeRaw      = Number(data.time_to_complete_seconds);
-    const seconds      = Number.isFinite(timeRaw) ? clamp(timeRaw, 0, 7200) : null;
+    const itemsRaw = Number(data.items_completed);
+    const items    = Number.isFinite(itemsRaw) ? clamp(itemsRaw, 0, 1000) : null;
+    const timeRaw  = Number(data.time_to_complete_seconds);
+    const seconds  = Number.isFinite(timeRaw) ? clamp(timeRaw, 0, 7200) : null;
 
-    // 7) Dedupe (same exact payload within 1.5s = drop)
-    const sig = path + '|' + scoreClamped + '|' + band + '|' + items + '|' + seconds;
+    // 6) Dedupe (same exact payload within 1.5s = drop)
+    const sig = path + '|' + items + '|' + seconds;
     const now = Date.now();
     if (sig === __sw_screener_last_sig && (now - __sw_screener_last_ts) < SW_SCREENER_DEDUPE_MS) {
         return;
@@ -1738,13 +1748,11 @@ function handleScreenerMessage(e) {
     __sw_screener_last_sig = sig;
     __sw_screener_last_ts  = now;
 
-    // 8) Build payload + push
+    // 7) Build payload + push.  Score data is never read.
     const payload = {
         assessment_name:      meta.assessment_name,
         assessment_category:  meta.assessment_category,
-        assessment_age_range: meta.assessment_age_range,
-        score_value: scoreClamped,
-        score_band:  band
+        assessment_age_range: meta.assessment_age_range
     };
     if (items   !== null) payload.items_completed = items;
     if (seconds !== null) payload.time_to_complete_seconds = seconds;
