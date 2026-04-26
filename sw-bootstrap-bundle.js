@@ -174,6 +174,37 @@ const ASSESSMENT_BY_PATH = {
         assessment_category: 'anxiety',
         assessment_age_range: 'adult',
         assessment_self_scoring: true
+    },
+    // Added 2026-04-25 (Phase 3.4j batch retrofit)
+    '/promis-29': {
+        assessment_name: 'promis_29',
+        assessment_category: 'general_health',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/raads-14': {
+        assessment_name: 'raads_14',
+        assessment_category: 'autism',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/abo': {
+        assessment_name: 'abo',
+        assessment_category: 'autism',  // Autistic Burnout Questionnaire -- a state experienced by autistic adults
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/cat-q': {
+        assessment_name: 'cat_q',
+        assessment_category: 'autism',  // Camouflaging Autistic Traits Questionnaire
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/pcl-5': {
+        assessment_name: 'pcl_5',
+        assessment_category: 'trauma_ptsd',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
     }
 };
 
