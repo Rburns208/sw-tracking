@@ -795,7 +795,7 @@ const RULES = [
     { pattern: /\b(executive-?function|ef-?coaching|time-?management|working-?memory)\b/i, cluster: 'executive_function' },
 
     // Screener interpretation
-    { pattern: /\b(screener|asrs|aq-?10|y-?bocs|abo|gad-?7|phq-?9|esq-?r)\b/i, cluster: 'screener_interpretation' }
+    { pattern: /\b(screener|asrs|aq-?10|y-?bocs|abo|gad-?7|phq-?9|esq-?r|promis-?29|raads-?14|cat-?q|pcl-?5)\b/i, cluster: 'screener_interpretation' }
 ];
 
 // ----- Main classifier ----------------------------------------------------
