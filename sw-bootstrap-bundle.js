@@ -132,6 +132,11 @@ const CLINICIAN_BY_PATH = {
         clinician_name: 'ryan_robertson',
         clinician_role: 'coach',
         clinician_specialty_primary: 'executive_function'
+    },
+    '/shane-thrapp': {
+        clinician_name: 'shane_thrapp',
+        clinician_role: 'coach',
+        clinician_specialty_primary: 'executive_function'
     }
 };
 
@@ -234,15 +239,17 @@ const FORM_NAME_BY_ID = {
     'f763b0f8-7a7a-41d7-9b53-20e255b7fb54': 'contact_ocd',             // /ocd
     '05ac8c0a-a579-4fe0-b510-9011052bcfb7': 'contact_trauma',          // /trauma
     '36f23520-c3fe-461a-bd0c-9d5b82365265': 'contact_insomnia',        // /insomnia
-    'cf278b73-b8a3-4a13-a9c2-84c2d951076f': 'contact_groups',          // /groups (primary)
-    'eaac169f-1e15-4f73-992a-5c0bbfaa6f11': 'contact_groups_secondary',// /groups (second form — verify intent)
+    'cf278b73-b8a3-4a13-a9c2-84c2d951076f': 'enrollment_neurodivergent_parents', // /groups (signup form for the Neurodivergent Parent Support Group)
+    'eaac169f-1e15-4f73-992a-5c0bbfaa6f11': 'inquiry_groups',                     // /groups (general questions about groups)
 
     // ---- Careers -------------------------------------------------------
     '8b77cff6-da02-4f58-8ac4-dfaf47625958': 'careers'                  // /careers
 };
 
 // Canonical form_name values, with form_type classification.
-// form_type: consult | booking | inquiry | clinician_contact | careers | other
+// form_type: consult | booking | inquiry | clinician_contact | enrollment | careers | other
+//   - enrollment: signup for a specific service offering (e.g., a support group). Higher
+//     intent than a generic inquiry; lead_value_estimate ≈ consult/clinician_contact range.
 // lead_value_estimate is used as the GA4 event `value` for generate_lead so
 // GA4 conversion reports show a dollar-weighted ranking instead of raw counts.
 const FORM_META = {
@@ -255,8 +262,8 @@ const FORM_META = {
     contact_ocd:               { form_type: 'inquiry',           lead_value_estimate: 200 },
     contact_trauma:            { form_type: 'inquiry',           lead_value_estimate: 200 },
     contact_insomnia:          { form_type: 'inquiry',           lead_value_estimate: 200 },
-    contact_groups:            { form_type: 'inquiry',           lead_value_estimate: 200 },
-    contact_groups_secondary:  { form_type: 'inquiry',           lead_value_estimate: 200 },
+    inquiry_groups:                   { form_type: 'inquiry',    lead_value_estimate: 200 },
+    enrollment_neurodivergent_parents:{ form_type: 'enrollment', lead_value_estimate: 250 },
 
     // Clinician-specific "Question" forms
     question_kiesa:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
