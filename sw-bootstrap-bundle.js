@@ -525,6 +525,235 @@ function writeJSON(store, key, value) {
     return store === 'local' ? safeSetLocal(key, raw) : safeSetSession(key, raw);
 }
 
+// ============================================================================
+// Click context tracker — installs a single document-level click listener
+// (capture phase) that decorates dataLayer with click-context dimensions BEFORE
+// GTM's auto-listener fires its native click trigger. The decoration powers
+// the GTM-side click tags (cta_click, outbound_click, image_click,
+// file_download, content_share) by populating their referenced DLVs:
+// dlv_scroll_at_click, dlv_time_on_page_seconds, dlv_cta_label, dlv_cta_location,
+// dlv_cta_variant, dlv_cta_position_percent, dlv_cta_viewport_time_seconds,
+// dlv_prior_cta_clicks_in_session.
+//
+// CTA classification is hybrid:
+//   1. data-cta-label / data-cta-location / data-cta-variant attrs on the
+//      element (or up to 3 ancestors) — explicit override.
+//   2. Regex: text matches /book now|schedule|.../, OR href matches
+//      /(contact|booking|book|schedule)/, AND element is button-like.
+//   3. Otherwise: not a CTA — generic click context still pushed so non-CTA
+//      click tags (outbound/image/file/share) still get scroll_at_click
+//      and time_on_page_seconds populated.
+//
+// Pushes a `sw_click_context` event with generic + cta-specific keys, AND
+// a `cta_click` event when classified — covering both possible GTM trigger
+// shapes for the cta_click tag (native click trigger reading DLVs vs custom
+// event trigger on `cta_click`).
+// ============================================================================
+
+let __sw_page_ready_ts = 0;
+let __sw_cta_view_starts = null;
+let __sw_cta_view_accums = null;
+let __sw_cta_intersection_observer = null;
+
+const CTA_TEXT_PATTERN = /\b(book\s*now|book\s*online|schedule|get\s*started|contact\s*us|book\s*(an\s*)?appointment|sign\s*up|join\s*(now|us)|start\s*here)\b/i;
+const CTA_HREF_PATTERN = /\/(contact|booking|book|schedule|signup|apply|appointment)(\b|\/|$)/i;
+const CTA_BUTTON_CLASSES = /\b(wixui-button|button|btn|cta)\b/i;
+
+function initClickContext() {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+    if (window.__sw_click_context_installed) return;
+    window.__sw_click_context_installed = true;
+
+    __sw_page_ready_ts = Date.now();
+    if (typeof WeakMap !== 'undefined') {
+        __sw_cta_view_starts = new WeakMap();
+        __sw_cta_view_accums = new WeakMap();
+    }
+
+    if (typeof IntersectionObserver !== 'undefined' && __sw_cta_view_starts) {
+        __sw_cta_intersection_observer = new IntersectionObserver(function (entries) {
+            const now = Date.now();
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) {
+                    if (!__sw_cta_view_starts.has(entry.target)) {
+                        __sw_cta_view_starts.set(entry.target, now);
+                    }
+                } else {
+                    const start = __sw_cta_view_starts.get(entry.target);
+                    if (start) {
+                        const accum = __sw_cta_view_accums.get(entry.target) || 0;
+                        __sw_cta_view_accums.set(entry.target, accum + (now - start));
+                        __sw_cta_view_starts.delete(entry.target);
+                    }
+                }
+            });
+        }, { threshold: 0.5 });
+        __sw_observeCtaCandidates();
+        // Re-scan for late-hydrated Wix CTAs every 2s for first 10s
+        let scans = 0;
+        const interval = setInterval(function () {
+            __sw_observeCtaCandidates();
+            if (++scans >= 5) clearInterval(interval);
+        }, 2000);
+    }
+
+    document.addEventListener('click', __sw_handleClickEvent, true);
+}
+
+function __sw_observeCtaCandidates() {
+    if (!__sw_cta_intersection_observer || typeof document === 'undefined') return;
+    const candidates = document.querySelectorAll('a.wixui-button, a[class*="button"], button, [data-cta-label]');
+    candidates.forEach(function (el) {
+        try { __sw_cta_intersection_observer.observe(el); } catch (e) { /* already observed */ }
+    });
+}
+
+function __sw_classifyCta(el) {
+    // 1) Explicit data-cta-* attrs (search element + 3 ancestors)
+    let cur = el;
+    for (let i = 0; i < 4 && cur; i++) {
+        if (cur.dataset && cur.dataset.ctaLabel) {
+            return {
+                source: 'explicit',
+                label: cur.dataset.ctaLabel,
+                location: cur.dataset.ctaLocation || '',
+                variant: cur.dataset.ctaVariant || ''
+            };
+        }
+        cur = cur.parentElement;
+    }
+    // 2) Regex auto-classifier
+    const text = (el.textContent || el.getAttribute('aria-label') || '').trim();
+    const href = el.getAttribute('href') || '';
+    const cls = (typeof el.className === 'string') ? el.className : '';
+    const isButtonish = CTA_BUTTON_CLASSES.test(cls) || el.tagName === 'BUTTON';
+    if (!isButtonish) return null;
+    if (CTA_TEXT_PATTERN.test(text) || CTA_HREF_PATTERN.test(href)) {
+        return {
+            source: 'regex',
+            label: __sw_slugify(text || el.id || 'cta'),
+            location: __sw_detectLocation(el),
+            variant: __sw_detectVariant(el)
+        };
+    }
+    return null;
+}
+
+function __sw_slugify(s) {
+    return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+}
+
+function __sw_detectLocation(el) {
+    let cur = el;
+    for (let i = 0; i < 8 && cur; i++) {
+        const tag = (cur.tagName || '').toLowerCase();
+        const id = (cur.id || '').toLowerCase();
+        if (tag === 'header' || /header|nav/.test(id)) return 'header';
+        if (tag === 'footer' || /footer/.test(id)) return 'footer';
+        if (tag === 'aside' || /sidebar|aside/.test(id)) return 'sidebar';
+        cur = cur.parentElement;
+    }
+    return 'body';
+}
+
+function __sw_detectVariant(el) {
+    const cls = ((typeof el.className === 'string') ? el.className : '').toLowerCase();
+    if (/primary|cta-primary/.test(cls)) return 'primary';
+    if (/secondary|cta-secondary/.test(cls)) return 'secondary';
+    if (/wixui-button/.test(cls)) return 'primary';
+    return 'default';
+}
+
+function __sw_getScrollAtClickPercent() {
+    try {
+        const docHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) - window.innerHeight;
+        if (docHeight <= 0) return 0;
+        return Math.min(100, Math.max(0, Math.round((window.scrollY / docHeight) * 100)));
+    } catch (e) { return 0; }
+}
+
+function __sw_getTimeOnPageSeconds() {
+    if (!__sw_page_ready_ts) return 0;
+    return Math.floor((Date.now() - __sw_page_ready_ts) / 1000);
+}
+
+function __sw_getCtaViewportTimeSeconds(el) {
+    if (!__sw_cta_view_accums) return 0;
+    let accum = __sw_cta_view_accums.get(el) || 0;
+    const start = __sw_cta_view_starts.get(el);
+    if (start) accum += (Date.now() - start);
+    return Math.floor(accum / 1000);
+}
+
+function __sw_getPriorCtaClicksInSession() {
+    try {
+        const v = parseInt(window.sessionStorage.getItem('__sw_cta_clicks') || '0', 10);
+        return isFinite(v) ? v : 0;
+    } catch (e) { return 0; }
+}
+
+function __sw_incrementCtaClicksInSession() {
+    try {
+        window.sessionStorage.setItem('__sw_cta_clicks', String(__sw_getPriorCtaClicksInSession() + 1));
+    } catch (e) { /* ignore */ }
+}
+
+function __sw_getCtaPositionPercent(el) {
+    try {
+        const rect = el.getBoundingClientRect();
+        const docHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        if (docHeight <= 0) return 0;
+        const absTop = rect.top + window.scrollY;
+        return Math.min(100, Math.max(0, Math.round((absTop / docHeight) * 100)));
+    } catch (e) { return 0; }
+}
+
+function __sw_handleClickEvent(ev) {
+    try {
+        const el = ev.target && ev.target.closest && ev.target.closest('a, button');
+        const cta = el ? __sw_classifyCta(el) : null;
+        __sw_pushClickContext(el, cta);
+        if (cta) {
+            __sw_incrementCtaClicksInSession();
+            __sw_pushCtaClick(el, cta);
+        }
+    } catch (e) { /* never crash the page */ }
+}
+
+function __sw_pushClickContext(el, cta) {
+    if (typeof window === 'undefined' || !window.dataLayer) return;
+    const payload = {
+        event: 'sw_click_context',
+        scroll_at_click: __sw_getScrollAtClickPercent(),
+        time_on_page_seconds: __sw_getTimeOnPageSeconds()
+    };
+    if (cta && el) {
+        payload.cta_label = cta.label || '';
+        payload.cta_location = cta.location || '';
+        payload.cta_variant = cta.variant || '';
+        payload.cta_position_percent = __sw_getCtaPositionPercent(el);
+        payload.cta_viewport_time_seconds = __sw_getCtaViewportTimeSeconds(el);
+        payload.prior_cta_clicks_in_session = __sw_getPriorCtaClicksInSession();
+        payload._sw_cta_classifier = cta.source;
+    }
+    window.dataLayer.push(payload);
+}
+
+function __sw_pushCtaClick(el, cta) {
+    if (typeof window === 'undefined') return;
+    sw_push('cta_click', {
+        cta_label: cta.label || '',
+        cta_location: cta.location || '',
+        cta_variant: cta.variant || '',
+        cta_position_percent: __sw_getCtaPositionPercent(el),
+        cta_viewport_time_seconds: __sw_getCtaViewportTimeSeconds(el),
+        prior_cta_clicks_in_session: __sw_getPriorCtaClicksInSession(),
+        scroll_at_click: __sw_getScrollAtClickPercent(),
+        time_on_page_seconds: __sw_getTimeOnPageSeconds(),
+        _sw_cta_classifier: cta.source
+    });
+}
+
     // ====== sw-first-touch ======
 // ============================================================================
 // sw-first-touch.js — First-touch attribution (frozen on first visit)
@@ -795,7 +1024,7 @@ const RULES = [
     { pattern: /\b(executive-?function|ef-?coaching|time-?management|working-?memory)\b/i, cluster: 'executive_function' },
 
     // Screener interpretation
-    { pattern: /\b(screener|asrs|aq-?10|y-?bocs|abo|gad-?7|phq-?9|esq-?r|promis-?29|raads-?14|cat-?q|pcl-?5)\b/i, cluster: 'screener_interpretation' }
+    { pattern: /\b(screener|asrs|aq-?10|y-?bocs|abo|gad-?7|phq-?9|esq-?r)\b/i, cluster: 'screener_interpretation' }
 ];
 
 // ----- Main classifier ----------------------------------------------------
@@ -859,6 +1088,156 @@ function classifyPostCategory(slug, title) {
         unassigned: 'general'
     };
     return map[cluster] || 'general';
+}
+
+// ============================================================================
+// extractBlogContext — DOM-scrape the current blog post for view_blog_post
+// dimensions. Called by masterPage.js on /post/<slug> pages, the result is
+// merged into __sw_context BEFORE the sw_page_context push so view_blog_post
+// (and any later cta_click / outbound_click on the same post) read populated
+// values via DLVs.
+//
+// What's reliable (always present in static HTML, server-rendered by Wix):
+//   - og:title / article:author / article:published_time / article:modified_time
+//   - schema.org BlogPosting JSON-LD (headline / author.name / datePublished / dateModified)
+//   - data-hook="time-to-read" element text ("X min read")
+//   - data-hook="post-title" text
+//
+// What's NOT reliable on DOMContentLoaded (Wix loads via React after hydration):
+//   - post category — fall back to classifyPostCategory(slug, title)
+//   - post tags — try meta article:tag; otherwise leave blank
+//   - exact word count — derive from reading_time × 200 (Wix's own divisor)
+//   - reviewed_by — scan body text for "Reviewed by: <name>" pattern; fall back
+//     to "Dr. Kiesa Kelly" (canonical ScienceWorks reviewer)
+//
+// Returns a flat object suitable for Object.assign-merge into __sw_context.
+// Never throws — every read is wrapped to fail soft to '' or 0.
+// ============================================================================
+function extractBlogContext(pathname) {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return {};
+
+    const out = {
+        post_slug:                   '',
+        post_title:                  '',
+        post_category:               '',
+        post_author:                 '',
+        post_tags:                   '',
+        post_word_count:             0,
+        post_reading_time_minutes:   0,
+        post_publish_date:           '',
+        post_days_since_publish:     0,
+        post_update_date:            '',
+        post_reviewed_by:            '',
+        post_topic_cluster:          'unassigned',
+        post_funnel_stage:           'awareness'
+    };
+
+    // ----- post_slug — last path segment of /post/<slug> ---------------------
+    try {
+        const path = (pathname || (window.location && window.location.pathname) || '').toLowerCase().replace(/\/$/, '');
+        const m = path.match(/^\/post\/([^\/?#]+)/);
+        if (m) out.post_slug = m[1];
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_title — og:title meta first, then h1, then document.title ---
+    try {
+        const ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle && ogTitle.content) out.post_title = ogTitle.content.trim();
+        if (!out.post_title) {
+            const h1 = document.querySelector('h1, [data-hook="post-title"]');
+            if (h1 && h1.textContent) out.post_title = h1.textContent.trim();
+        }
+        if (!out.post_title && document.title) {
+            out.post_title = document.title.replace(/\s*[|\-–]\s*ScienceWorks.*$/i, '').trim();
+        }
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_author — article:author meta, then JSON-LD author.name ------
+    try {
+        const aMeta = document.querySelector('meta[property="article:author"], meta[name="author"]');
+        if (aMeta && aMeta.content) out.post_author = aMeta.content.trim();
+        if (!out.post_author) {
+            const ldBlocks = document.querySelectorAll('script[type="application/ld+json"]');
+            for (let i = 0; i < ldBlocks.length; i++) {
+                try {
+                    const data = JSON.parse(ldBlocks[i].textContent || '{}');
+                    const blog = (Array.isArray(data) ? data : [data]).find(function (d) { return d && (d['@type'] === 'BlogPosting' || d['@type'] === 'Article'); });
+                    if (blog && blog.author) {
+                        out.post_author = (typeof blog.author === 'string') ? blog.author : (blog.author.name || '');
+                        if (out.post_author) break;
+                    }
+                } catch (err) { /* skip malformed block */ }
+            }
+        }
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_publish_date / post_update_date — meta tags (ISO 8601) ------
+    try {
+        const pubMeta = document.querySelector('meta[property="article:published_time"]');
+        if (pubMeta && pubMeta.content) out.post_publish_date = pubMeta.content;
+        const modMeta = document.querySelector('meta[property="article:modified_time"]');
+        if (modMeta && modMeta.content) out.post_update_date = modMeta.content;
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_days_since_publish — derive from post_publish_date ----------
+    try {
+        if (out.post_publish_date) {
+            const ms = Date.now() - new Date(out.post_publish_date).getTime();
+            if (isFinite(ms) && ms >= 0) out.post_days_since_publish = Math.floor(ms / 86400000);
+        }
+    } catch (e) { /* leave 0 */ }
+
+    // ----- post_reading_time_minutes — data-hook="time-to-read" "X min read" -
+    try {
+        const ttr = document.querySelector('[data-hook="time-to-read"]');
+        if (ttr && ttr.textContent) {
+            const m = ttr.textContent.match(/(\d+)\s*min/i);
+            if (m) out.post_reading_time_minutes = parseInt(m[1], 10) || 0;
+        }
+    } catch (e) { /* leave 0 */ }
+
+    // ----- post_word_count — derive from reading_time × 200 (Wix's divisor) -
+    if (out.post_reading_time_minutes > 0) {
+        out.post_word_count = out.post_reading_time_minutes * 200;
+    }
+
+    // ----- post_tags — meta[property="article:tag"] (multiple) --------------
+    try {
+        const tagMetas = document.querySelectorAll('meta[property="article:tag"]');
+        const tags = [];
+        for (let i = 0; i < tagMetas.length; i++) {
+            const v = (tagMetas[i].content || '').trim();
+            if (v) tags.push(v.toLowerCase().replace(/\s+/g, '_'));
+        }
+        out.post_tags = tags.join(',');
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_reviewed_by — scan body for "Reviewed by: <name>" -----------
+    // Standard ScienceWorks blog template puts "Reviewed by: Dr. Kiesa Kelly"
+    // (or other reviewer) in a header line near the top of every post.
+    try {
+        const body = document.body && document.body.textContent || '';
+        const m = body.match(/Reviewed by:\s*([A-Za-z.\-' ]{2,60})/);
+        if (m) {
+            out.post_reviewed_by = m[1].trim();
+        } else if (out.post_author) {
+            // Fallback: ScienceWorks posts are always reviewed by Dr. Kelly.
+            out.post_reviewed_by = 'Dr. Kiesa Kelly';
+        }
+    } catch (e) { /* leave blank */ }
+
+    // ----- post_topic_cluster + post_funnel_stage — existing classifiers ----
+    try {
+        out.post_topic_cluster = classifyPost(out.post_slug, out.post_title);
+        out.post_funnel_stage  = classifyFunnelStage(out.post_slug, out.post_title);
+    } catch (e) { /* keep defaults */ }
+
+    // ----- post_category — classifier fallback (Wix loads real category async) -
+    try {
+        out.post_category = classifyPostCategory(out.post_slug, out.post_title);
+    } catch (e) { /* leave blank */ }
+
+    return out;
 }
 
     // ====== sw-scoring ======
@@ -1139,6 +1518,12 @@ function getAllCounts() {
         if (CLINICIAN_BY_PATH[normalizedPath])  clinicianAttrs  = CLINICIAN_BY_PATH[normalizedPath];
         if (ASSESSMENT_BY_PATH[normalizedPath]) assessmentAttrs = ASSESSMENT_BY_PATH[normalizedPath];
 
+        // -- Phase 2c.x: Blog post context (DOM scrape on /post/<slug>) ---
+        let blogAttrs = {};
+        if (pageType === 'blog_post') {
+            try { blogAttrs = extractBlogContext(normalizedPath); } catch (e) { /* leave blank */ }
+        }
+
         // -- Derived user properties from the scoring engine --
         const userProps = getAllUserProperties();
         const counts = getAllCounts();
@@ -1174,14 +1559,38 @@ function getAllCounts() {
             // Service / clinician / assessment (populated only on matching paths)
             service_name:              serviceAttrs.service_name              || '',
             service_category:          serviceAttrs.service_category          || '',
+            service_variant:           serviceAttrs.service_variant           || '',
+            service_modality:          serviceAttrs.service_modality          || '',
             clinician_name:            clinicianAttrs.clinician_name          || '',
             clinician_role:            clinicianAttrs.clinician_role          || '',
             clinician_specialty_primary: clinicianAttrs.clinician_specialty_primary || '',
+            clinician_specialties:     Array.isArray(clinicianAttrs.clinician_specialties)
+                                        ? clinicianAttrs.clinician_specialties.join(',')
+                                        : (clinicianAttrs.clinician_specialties || ''),
+            clinician_takes_insurance: typeof clinicianAttrs.clinician_takes_insurance === 'boolean'
+                                        ? clinicianAttrs.clinician_takes_insurance : '',
+            clinician_accepting_new:   typeof clinicianAttrs.clinician_accepting_new === 'boolean'
+                                        ? clinicianAttrs.clinician_accepting_new : '',
             assessment_name:           assessmentAttrs.assessment_name        || '',
             assessment_category:       assessmentAttrs.assessment_category    || '',
             assessment_age_range:      assessmentAttrs.assessment_age_range   || '',
             assessment_self_scoring:   typeof assessmentAttrs.assessment_self_scoring === 'boolean'
                                         ? assessmentAttrs.assessment_self_scoring : '',
+
+            // Phase 2c.x: Blog post (populated only on /post/<slug> pages)
+            post_slug:                 blogAttrs.post_slug                || '',
+            post_title:                blogAttrs.post_title               || '',
+            post_category:             blogAttrs.post_category            || '',
+            post_author:               blogAttrs.post_author              || '',
+            post_tags:                 blogAttrs.post_tags                || '',
+            post_word_count:           blogAttrs.post_word_count          || 0,
+            post_reading_time_minutes: blogAttrs.post_reading_time_minutes || 0,
+            post_publish_date:         blogAttrs.post_publish_date        || '',
+            post_days_since_publish:   blogAttrs.post_days_since_publish  || 0,
+            post_update_date:          blogAttrs.post_update_date         || '',
+            post_reviewed_by:          blogAttrs.post_reviewed_by         || '',
+            post_topic_cluster:        blogAttrs.post_topic_cluster       || '',
+            post_funnel_stage:         blogAttrs.post_funnel_stage        || '',
 
             // Derived user properties
             primary_topic_cluster:     userProps.primary_topic_cluster,
@@ -1252,6 +1661,9 @@ function getAllCounts() {
         // assessment_score_interaction. Idempotent -- safe to call on
         // every SPA-nav re-bootstrap.
         try { initScreenerListener();              } catch (e) { /* non-fatal */ }
+
+        // -- Phase 2c.x: Click context handler ---------------------------
+        try { initClickContext();                  } catch (e) { /* non-fatal */ }
     }
 
     // ------------------------------------------------------------------------
