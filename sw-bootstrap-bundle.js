@@ -1547,6 +1547,7 @@ function getAllCounts() {
             clinician_name:            clinicianAttrs.clinician_name          || '',
             clinician_role:            clinicianAttrs.clinician_role          || '',
             clinician_specialty_primary: clinicianAttrs.clinician_specialty_primary || '',
+            clinician_primary_service: clinicianAttrs.clinician_primary_service || '',
             clinician_specialties:     Array.isArray(clinicianAttrs.clinician_specialties)
                                         ? clinicianAttrs.clinician_specialties.join(',')
                                         : (clinicianAttrs.clinician_specialties || ''),
