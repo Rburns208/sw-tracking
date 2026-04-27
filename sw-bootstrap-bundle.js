@@ -58,49 +58,67 @@ const SERVICE_BY_PATH = {
     '/psychological-assessments': {
         service_name: 'psychological_assessments',
         service_category: 'assessment',
-        rolls_up_to: 'assessment_clinical_diagnostics'
+        rolls_up_to: 'assessment_clinical_diagnostics',
+        service_variant: 'comprehensive_diagnostic',
+        service_modality: 'unassigned'
     },
     '/specialized-therapy': {
         service_name: 'specialized_therapy',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'multispecialty_individual',
+        service_modality: 'multiple_modalities'
     },
     '/executive-function-coaching': {
         service_name: 'executive_function_coaching',
         service_category: 'coaching',
-        rolls_up_to: 'coaching_neurodivergent_adults'
+        rolls_up_to: 'coaching_neurodivergent_adults',
+        service_variant: 'coaching_neurodivergent',
+        service_modality: 'unassigned'
     },
     '/mental-health-screening': {
         service_name: 'mental_health_screening',
         service_category: 'screening',
-        rolls_up_to: 'assessment_tools_only'
+        rolls_up_to: 'assessment_tools_only',
+        service_variant: 'screener_tools_only',
+        service_modality: 'unassigned'
     },
     // Condition-specific hubs — tracked as distinct service_name but roll up
     // to therapy_individual_adults at the user level.
     '/ocd': {
         service_name: 'service_ocd_condition_hub',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'condition_hub_ocd',
+        service_modality: 'erp'
     },
     '/trauma': {
         service_name: 'service_trauma_condition_hub',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'condition_hub_trauma',
+        service_modality: 'emdr'
     },
     '/insomnia': {
         service_name: 'service_insomnia_condition_hub',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'condition_hub_insomnia',
+        service_modality: 'cbt_i'
     },
     '/medication-management': {
         service_name: 'service_medication_management',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'psychiatric_medication',
+        service_modality: 'unassigned'
     },
     '/groups': {
         service_name: 'service_groups',
         service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults'
+        rolls_up_to: 'therapy_individual_adults',
+        service_variant: 'group_program',
+        service_modality: 'multiple_modalities'
     }
 };
 
@@ -111,32 +129,56 @@ const CLINICIAN_BY_PATH = {
     '/kiesakelly': {
         clinician_name: 'kiesa_kelly',
         clinician_role: 'psychologist',
-        clinician_specialty_primary: 'clinical_psychology'
+        clinician_specialty_primary: 'clinical_diagnostics',
+        clinician_primary_service: 'assessments',
+        clinician_specialties: ['ocd', 'trauma_ptsd', 'audhd', 'adhd', 'autism', 'clinical_diagnostics'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     },
     '/laura-travers-heinig': {
         clinician_name: 'laura_travers_heinig',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'womens_health'
+        clinician_role: 'psychologist',
+        clinician_specialty_primary: 'womens_health',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['health_psychology', 'insomnia_sleep', 'perimenopause_neurodivergence', 'trauma_ptsd'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     },
     '/catherinecavin': {
         clinician_name: 'catherine_cavin',
         clinician_role: 'therapist',
-        clinician_specialty_primary: 'adhd_autism'
+        clinician_specialty_primary: 'adhd_autism',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['ocd', 'adhd', 'autism', 'chronic_illness'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     },
     '/kathryn-wood': {
         clinician_name: 'kathryn_wood',
         clinician_role: 'therapist',
-        clinician_specialty_primary: 'trauma'
+        clinician_specialty_primary: 'trauma',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['anxiety', 'ocd', 'trauma_ptsd', 'insomnia_sleep'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     },
     '/ryan-robertson': {
         clinician_name: 'ryan_robertson',
-        clinician_role: 'coach',
-        clinician_specialty_primary: 'executive_function'
+        clinician_role: 'therapist',
+        clinician_specialty_primary: 'couples_family_therapy',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['couples_relationship_issues', 'family_parenting_dynamics', 'ocd', 'adhd', 'autism', 'audhd', 'insomnia_sleep'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     },
     '/shane-thrapp': {
         clinician_name: 'shane_thrapp',
         clinician_role: 'coach',
-        clinician_specialty_primary: 'executive_function'
+        clinician_specialty_primary: 'executive_function',
+        clinician_primary_service: 'coaching',
+        clinician_specialties: ['adhd', 'autism', 'audhd', 'executive_function'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     }
 };
 
@@ -179,37 +221,6 @@ const ASSESSMENT_BY_PATH = {
         assessment_category: 'anxiety',
         assessment_age_range: 'adult',
         assessment_self_scoring: true
-    },
-    // Added 2026-04-25 (Phase 3.4j batch retrofit)
-    '/promis-29': {
-        assessment_name: 'promis_29',
-        assessment_category: 'general_health',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/raads-14': {
-        assessment_name: 'raads_14',
-        assessment_category: 'autism',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/abo': {
-        assessment_name: 'abo',
-        assessment_category: 'autism',  // Autistic Burnout Questionnaire -- a state experienced by autistic adults
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/cat-q': {
-        assessment_name: 'cat_q',
-        assessment_category: 'autism',  // Camouflaging Autistic Traits Questionnaire
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/pcl-5': {
-        assessment_name: 'pcl_5',
-        assessment_category: 'trauma_ptsd',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
     }
 };
 
@@ -217,65 +228,31 @@ const ASSESSMENT_BY_PATH = {
 // Form name catalog — canonical names used across generate_lead + form_start
 // + form_abandonment events
 // --------------------------------------------------------------------------
-// Keys are the Wix Forms widget UUID (strip the `form-` prefix from the
-// container's DOM id). Values are the canonical form_name used across
-// form_start / form_abandonment / generate_lead events.
-// Populated in Phase 3.3 from a live crawl of scienceworkshealth.com.
+// Keys are the Wix element ID of the form (update in Phase 3.3 after inspecting
+// the actual element IDs on the live site). Values are the canonical form_name.
 const FORM_NAME_BY_ID = {
-    // ---- Shared contact page (/contact) + reuse on sub-pages -----------
-    '34f61b44-208c-45bd-a3f3-d60372ff9578': 'therapy_consultation',    // /contact, /specialized-therapy, /ocd, /trauma, /insomnia
-    '08c9228f-3c88-403e-be5f-f337849d2494': 'booking_kiesa',           // /contact, /psychological-assessments (Wix Bookings widget)
-    '2195f02f-e8b3-44d9-a063-9a741cba6261': 'contact_general',         // /contact, /medication-management
-
-    // ---- Clinician-specific "Question" forms ---------------------------
-    '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'question_kiesa',          // /kiesakelly, /psychological-assessments
-    'e522454a-a18f-40e6-a532-aebe5daed5ea': 'question_laura',          // /laura-travers-heinig
-    'd0a38253-f880-402f-8487-ee52282b757d': 'question_catherine',      // /catherinecavin
-    'e9ea2c38-cdb6-4fe9-a3c3-6cc8d7c1d39b': 'question_kathryn',        // /kathryn-wood
-    '585c11e1-70a3-43f9-9ad2-094ad71c6793': 'question_ryan_robertson', // /ryan-robertson
-    'dfe4f28d-84a1-450e-a128-7a6edbf08bf6': 'question_shane',          // /executive-function-coaching (Shane, EF coach)
-
-    // ---- Condition-hub-specific contact forms --------------------------
-    'f763b0f8-7a7a-41d7-9b53-20e255b7fb54': 'contact_ocd',             // /ocd
-    '05ac8c0a-a579-4fe0-b510-9011052bcfb7': 'contact_trauma',          // /trauma
-    '36f23520-c3fe-461a-bd0c-9d5b82365265': 'contact_insomnia',        // /insomnia
-    'cf278b73-b8a3-4a13-a9c2-84c2d951076f': 'enrollment_neurodivergent_parents', // /groups (signup form for the Neurodivergent Parent Support Group)
-    'eaac169f-1e15-4f73-992a-5c0bbfaa6f11': 'inquiry_groups',                     // /groups (general questions about groups)
-
-    // ---- Careers -------------------------------------------------------
-    '8b77cff6-da02-4f58-8ac4-dfaf47625958': 'careers'                  // /careers
+    // Main inquiry forms — one per page. IDs get filled in during Phase 3.3
+    // when each form is wired individually. Canonical names below are
+    // authoritative for now.
+    // '#wixFormXYZ': 'contact_main',
+    // '#wixFormABC': 'assessment_inquiry',
+    // etc.
 };
 
 // Canonical form_name values, with form_type classification.
-// form_type: consult | booking | inquiry | clinician_contact | enrollment | careers | other
-//   - enrollment: signup for a specific service offering (e.g., a support group). Higher
-//     intent than a generic inquiry; lead_value_estimate ≈ consult/clinician_contact range.
-// lead_value_estimate is used as the GA4 event `value` for generate_lead so
-// GA4 conversion reports show a dollar-weighted ranking instead of raw counts.
+// form_type: consult | inquiry | careers | clinician_contact | newsletter | other
 const FORM_META = {
-    // Consult + booking — highest intent
-    therapy_consultation:      { form_type: 'consult',           lead_value_estimate: 250 },
-    booking_kiesa:             { form_type: 'booking',           lead_value_estimate: 250 },
-
-    // General / condition inquiries
-    contact_general:           { form_type: 'inquiry',           lead_value_estimate: 200 },
-    contact_ocd:               { form_type: 'inquiry',           lead_value_estimate: 200 },
-    contact_trauma:            { form_type: 'inquiry',           lead_value_estimate: 200 },
-    contact_insomnia:          { form_type: 'inquiry',           lead_value_estimate: 200 },
-    inquiry_groups:                   { form_type: 'inquiry',    lead_value_estimate: 200 },
-    enrollment_neurodivergent_parents:{ form_type: 'enrollment', lead_value_estimate: 250 },
-
-    // Clinician-specific "Question" forms
-    question_kiesa:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    question_laura:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    question_catherine:        { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    question_kathryn:          { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    question_ryan_robertson:   { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    question_shane:            { form_type: 'clinician_contact', lead_value_estimate: 250 },
-
-    // Careers + catch-all
-    careers:                   { form_type: 'careers',           lead_value_estimate: 0   },
-    unknown_form:              { form_type: 'other',             lead_value_estimate: 0   }
+    contact_main:                  { form_type: 'inquiry',           lead_value_estimate: 250 },
+    assessment_inquiry:            { form_type: 'inquiry',           lead_value_estimate: 250 },
+    therapy_inquiry:               { form_type: 'inquiry',           lead_value_estimate: 250 },
+    coaching_inquiry:              { form_type: 'inquiry',           lead_value_estimate: 250 },
+    screening_inquiry:             { form_type: 'inquiry',           lead_value_estimate: 250 },
+    careers:                       { form_type: 'careers',           lead_value_estimate: 0   },
+    clinician_kiesa_kelly:         { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_laura_travers_heinig:{ form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_catherine_cavin:     { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_kathryn_wood:        { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 }
 };
 
 // --------------------------------------------------------------------------
@@ -316,7 +293,7 @@ const TOPIC_CLUSTERS = [
     'couples_relationship_issues', 'family_parenting_dynamics',
     'executive_function', 'health_psychology',
     'perimenopause_neurodivergence', 'screener_interpretation',
-    'professional_audience', 'unassigned'
+    'professional_audience', 'clinical_diagnostics', 'unassigned'
 ];
 
 const SERVICE_INTERESTS = [
@@ -1215,9 +1192,15 @@ function extractBlogContext(pathname) {
     // ----- post_reviewed_by — scan body for "Reviewed by: <name>" -----------
     // Standard ScienceWorks blog template puts "Reviewed by: Dr. Kiesa Kelly"
     // (or other reviewer) in a header line near the top of every post.
+    // Tightened pattern (Phase 2c.x rev 11): the prior `{2,60}` greedy capture
+    // ran past the end of the name into the next paragraph because Wix's
+    // textContent has no newline between header and body. Match a name shape
+    // (Dr.? + 1-3 capitalized words) and stop before the next sentence-start
+    // pattern (whitespace then a capital-followed-by-lowercase that's not
+    // part of the name).
     try {
         const body = document.body && document.body.textContent || '';
-        const m = body.match(/Reviewed by:\s*([A-Za-z.\-' ]{2,60})/);
+        const m = body.match(/Reviewed by:\s*((?:Dr\.\s)?[A-Z][a-z]+(?:[\s-][A-Z][a-z]+){0,2}(?:,\s[A-Z][a-zA-Z]+)?)/);
         if (m) {
             out.post_reviewed_by = m[1].trim();
         } else if (out.post_author) {
