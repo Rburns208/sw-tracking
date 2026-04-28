@@ -228,26 +228,85 @@ const ASSESSMENT_BY_PATH = {
 // Form name catalog — canonical names used across generate_lead + form_start
 // + form_abandonment events
 // --------------------------------------------------------------------------
-// Keys are the Wix element ID of the form (update in Phase 3.3 after inspecting
-// the actual element IDs on the live site). Values are the canonical form_name.
+// Keys are the lowercase UUID portion of the Wix form container element ID
+// (i.e., element id `form-<UUID>` resolves via FORM_NAME_BY_ID[<UUID>]).
+// Values are the canonical form_name used across generate_lead, form_start,
+// and form_abandonment events. Populated 2026-04-28 (Phase 4.4-A) from a
+// live crawl of scienceworkshealth.com — 16 unique form UUIDs across 25 pages.
+//
+// Note on multi-page UUIDs: Wix reuses form instances across pages (same UUID
+// rendered on multiple URLs). Lookup is keyed by UUID alone, so a UUID maps
+// to a single canonical form_name regardless of submission page. Page-level
+// intent is captured separately via `service_context` on the bundle's push.
 const FORM_NAME_BY_ID = {
-    // Main inquiry forms — one per page. IDs get filled in during Phase 3.3
-    // when each form is wired individually. Canonical names below are
-    // authoritative for now.
-    // '#wixFormXYZ': 'contact_main',
-    // '#wixFormABC': 'assessment_inquiry',
-    // etc.
+    // Universal "Schedule a free consultation" — primary contact form,
+    // placed on /contact, /specialized-therapy, /ocd, /trauma, /pre-surgical-assessment
+    '34f61b44-208c-45bd-a3f3-d60372ff9578': 'contact_main',
+
+    // Detailed 9-field assessment inquiry — "Get in Touch with Dr. Kelly for
+    // Your Assessment" — on /contact + /psychological-assessments
+    '08c9228f-3c88-403e-be5f-f337849d2494': 'assessment_inquiry',
+
+    // Coaching inquiry — "Get in Touch with Shane for Coaching" —
+    // on /executive-function-coaching + /shane-thrapp
+    'dfe4f28d-84a1-450e-a128-7a6edbf08bf6': 'coaching_inquiry',
+
+    // Service-specific 4-field inquiry forms (Name/Email/Phone/"How can we help?")
+    'f763b0f8-7a7a-41d7-9b53-20e255b7fb54': 'ocd_inquiry',      // /ocd
+    '05ac8c0a-a579-4fe0-b510-9011052bcfb7': 'trauma_inquiry',   // /trauma
+    'a16374e8-f697-4621-83f9-a0f5e9397adf': 'research_inquiry', // /in-depth-research
+
+    // "Do you have questions?" forms — different UUIDs across page contexts
+    '2195f02f-e8b3-44d9-a063-9a741cba6261': 'quick_questions',  // /contact, /emdr-bilateral-stimulation, /medication-management, /resources
+    'eaac169f-1e15-4f73-992a-5c0bbfaa6f11': 'groups_questions', // /groups
+
+    // /groups dedicated signup ("Select a group below to get started")
+    'cf278b73-b8a3-4a13-a9c2-84c2d951076f': 'groups_signup',
+
+    // Newsletter — single-field email subscribe on /in-depth-research
+    '7a0e6755-6f6c-47f0-b060-5721e78237b4': 'research_subscribe',
+
+    // Careers application
+    '8b77cff6-da02-4f58-8ac4-dfaf47625958': 'careers',
+
+    // Clinician profile forms — one per clinician page
+    '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'clinician_kiesa_kelly',          // /psychological-assessments + /kiesakelly
+    'e522454a-a18f-40e6-a532-aebe5daed5ea': 'clinician_laura_travers_heinig', // /laura-travers-heinig
+    'd0a38253-f880-402f-8487-ee52282b757d': 'clinician_catherine_cavin',      // /catherinecavin
+    'e9ea2c38-cdb6-4fe9-a3c3-6cc8d7c1d39b': 'clinician_kathryn_wood',         // /kathryn-wood
+    '585c11e1-70a3-43f9-9ad2-094ad71c6793': 'clinician_ryan_robertson'        // /ryan-robertson
 };
 
 // Canonical form_name values, with form_type classification.
 // form_type: consult | inquiry | careers | clinician_contact | newsletter | other
+// Updated 2026-04-28 (Phase 4.4-A): removed unused therapy_inquiry +
+// screening_inquiry; added 7 new keys (ocd/trauma/research_inquiry,
+// quick_questions, groups_questions, groups_signup, research_subscribe).
 const FORM_META = {
+    // Main inquiry forms (universal consultation / detailed intake)
     contact_main:                  { form_type: 'inquiry',           lead_value_estimate: 250 },
     assessment_inquiry:            { form_type: 'inquiry',           lead_value_estimate: 250 },
-    therapy_inquiry:               { form_type: 'inquiry',           lead_value_estimate: 250 },
     coaching_inquiry:              { form_type: 'inquiry',           lead_value_estimate: 250 },
-    screening_inquiry:             { form_type: 'inquiry',           lead_value_estimate: 250 },
+
+    // Service-specific 4-field inquiry forms
+    ocd_inquiry:                   { form_type: 'inquiry',           lead_value_estimate: 250 },
+    trauma_inquiry:                { form_type: 'inquiry',           lead_value_estimate: 250 },
+    research_inquiry:              { form_type: 'inquiry',           lead_value_estimate: 250 },
+
+    // "Do you have questions?" generic Q&A forms
+    quick_questions:               { form_type: 'inquiry',           lead_value_estimate: 250 },
+    groups_questions:              { form_type: 'inquiry',           lead_value_estimate: 250 },
+
+    // Group enrollment
+    groups_signup:                 { form_type: 'inquiry',           lead_value_estimate: 250 },
+
+    // Newsletter / subscription
+    research_subscribe:            { form_type: 'newsletter',        lead_value_estimate: 0   },
+
+    // Careers
     careers:                       { form_type: 'careers',           lead_value_estimate: 0   },
+
+    // Clinician profile forms
     clinician_kiesa_kelly:         { form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_laura_travers_heinig:{ form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_catherine_cavin:     { form_type: 'clinician_contact', lead_value_estimate: 250 },
@@ -1447,285 +1506,6 @@ function getAllCounts() {
     };
 }
 
-    // ========================================================================
-    // Bootstrap — adapted from masterPage.js
-    // ========================================================================
-    // Computes session/page/user context envelope, stamps it on window.__sw_context,
-    // and fires sw_page_context. On a brand-new user, also fires sw_first_visit.
-    // On a brand-new session, also fires sw_session_start.
-    //
-    // Path D changes from the Velo original:
-    //   - wixLocation.path/url  -> window.location.pathname
-    //   - $w.onReady            -> DOMContentLoaded / immediate-ready
-    //   - SPA nav hook          -> history.pushState patch + popstate listener
-    //   - Removed unused imports (wix-window was never referenced in body)
-    // ========================================================================
-    function bootstrapTracking() {
-        if (typeof window === 'undefined') return;   // SSR guard (defensive)
-        window.dataLayer = window.dataLayer || [];
-
-        // -- Gather raw page signals --
-        // Path D: pathname comes straight from window.location, lowercased and
-        // trailing-slash-trimmed to normalize against the taxonomy tables.
-        const rawPath = (window.location && window.location.pathname) || '/';
-        const normalizedPath = rawPath.toLowerCase().replace(/\/$/, '') || '/';
-        const search = (window.location && window.location.search) || '';
-        const referrer = (typeof document !== 'undefined' && document.referrer) || '';
-        const userAgent = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-
-        const utm = getUtmParams(search);
-        const pageType = getPageType(normalizedPath);
-        const deviceClass = getDeviceClass(userAgent);
-        const trafficSource = getTrafficSource(referrer, utm);
-        const referrerDomain = getReferrerDomain(referrer);
-
-        // -- First-touch bootstrap (idempotent; no-op on returning visitors) --
-        // Path D fix: capture whether first-touch was already persisted BEFORE
-        // we call maybeSetFirstTouchBootstrap. This lets sw_first_visit fire
-        // exactly once per device (the localStorage scope) instead of once per
-        // page of a new user's first session. Matches the masterPage.js comment
-        // "Fires exactly once per device (controlled by first_traffic_source
-        // being set)." Gate below reads this flag instead of session.is_new_user.
-        const firstTouchWasAlreadySet = safeGetLocal('sw_ft_traffic_source', null) != null;
-
-        maybeSetFirstTouchBootstrap(normalizedPath, referrer, utm, userAgent);
-
-        // -- Session context --
-        const session = initSessionContext(normalizedPath, referrer, utm);
-
-        // -- Path taxonomy lookups --
-        let serviceAttrs = {};
-        let clinicianAttrs = {};
-        let assessmentAttrs = {};
-        if (SERVICE_BY_PATH[normalizedPath])    serviceAttrs    = SERVICE_BY_PATH[normalizedPath];
-        if (CLINICIAN_BY_PATH[normalizedPath])  clinicianAttrs  = CLINICIAN_BY_PATH[normalizedPath];
-        if (ASSESSMENT_BY_PATH[normalizedPath]) assessmentAttrs = ASSESSMENT_BY_PATH[normalizedPath];
-
-        // -- Phase 2c.x: Blog post context (DOM scrape on /post/<slug>) ---
-        let blogAttrs = {};
-        if (pageType === 'blog_post') {
-            try { blogAttrs = extractBlogContext(normalizedPath); } catch (e) { /* leave blank */ }
-        }
-
-        // -- Derived user properties from the scoring engine --
-        const userProps = getAllUserProperties();
-        const counts = getAllCounts();
-        const firstTouch = getAllFirstTouchAttrs();
-
-        // -- Build the context envelope --
-        const context = {
-            // Page-scope
-            page_type:            pageType,
-            page_path:            normalizedPath,
-            page_location:        (window.location && window.location.href) || '',
-
-            // Session-scope
-            session_id:           session.session_id,
-            session_number:       session.session_number,
-            is_new_user:          session.is_new_user,
-            is_new_session:       session.is_new_session,
-            session_start_ts_ms:  session.session_start_ts_ms,
-            entry_method:         session.entry_method,
-            entry_page:           session.entry_page,
-            session_page_count:   session.session_page_count,
-
-            // Device / traffic
-            device_class:         deviceClass,
-            traffic_source:       trafficSource,
-            referrer_domain:      referrerDomain,
-            utm_source:           utm.utm_source   || '',
-            utm_medium:           utm.utm_medium   || '',
-            utm_campaign:         utm.utm_campaign || '',
-            utm_content:          utm.utm_content  || '',
-            utm_term:             utm.utm_term     || '',
-
-            // Service / clinician / assessment (populated only on matching paths)
-            service_name:              serviceAttrs.service_name              || '',
-            service_category:          serviceAttrs.service_category          || '',
-            service_variant:           serviceAttrs.service_variant           || '',
-            service_modality:          serviceAttrs.service_modality          || '',
-            clinician_name:            clinicianAttrs.clinician_name          || '',
-            clinician_role:            clinicianAttrs.clinician_role          || '',
-            clinician_specialty_primary: clinicianAttrs.clinician_specialty_primary || '',
-            clinician_primary_service: clinicianAttrs.clinician_primary_service || '',
-            clinician_specialties:     Array.isArray(clinicianAttrs.clinician_specialties)
-                                        ? clinicianAttrs.clinician_specialties.join(',')
-                                        : (clinicianAttrs.clinician_specialties || ''),
-            clinician_takes_insurance: typeof clinicianAttrs.clinician_takes_insurance === 'boolean'
-                                        ? clinicianAttrs.clinician_takes_insurance : '',
-            clinician_accepting_new:   typeof clinicianAttrs.clinician_accepting_new === 'boolean'
-                                        ? clinicianAttrs.clinician_accepting_new : '',
-            assessment_name:           assessmentAttrs.assessment_name        || '',
-            assessment_category:       assessmentAttrs.assessment_category    || '',
-            assessment_age_range:      assessmentAttrs.assessment_age_range   || '',
-            assessment_self_scoring:   typeof assessmentAttrs.assessment_self_scoring === 'boolean'
-                                        ? assessmentAttrs.assessment_self_scoring : '',
-
-            // Phase 2c.x: Blog post (populated only on /post/<slug> pages)
-            post_slug:                 blogAttrs.post_slug                || '',
-            post_title:                blogAttrs.post_title               || '',
-            post_category:             blogAttrs.post_category            || '',
-            post_author:               blogAttrs.post_author              || '',
-            post_tags:                 blogAttrs.post_tags                || '',
-            post_word_count:           blogAttrs.post_word_count          || 0,
-            post_reading_time_minutes: blogAttrs.post_reading_time_minutes || 0,
-            post_publish_date:         blogAttrs.post_publish_date        || '',
-            post_days_since_publish:   blogAttrs.post_days_since_publish  || 0,
-            post_update_date:          blogAttrs.post_update_date         || '',
-            post_reviewed_by:          blogAttrs.post_reviewed_by         || '',
-            post_topic_cluster:        blogAttrs.post_topic_cluster       || '',
-            post_funnel_stage:         blogAttrs.post_funnel_stage        || '',
-
-            // Derived user properties
-            primary_topic_cluster:     userProps.primary_topic_cluster,
-            topic_confidence:          userProps.topic_confidence,
-            primary_service_interest:  userProps.primary_service_interest,
-            service_confidence:        userProps.service_confidence,
-            primary_modality:          userProps.primary_modality,
-            modality_confidence:       userProps.modality_confidence,
-
-            // Cumulative counts
-            assessments_count:         counts.assessments_count,
-            modalities_count:          counts.modalities_count,
-            services_count:            counts.services_count,
-            blog_posts_count:          counts.blog_posts_count,
-
-            // First-touch (all 10 attributes — blanks until set)
-            first_traffic_source:      firstTouch.first_traffic_source,
-            first_utm_source:          firstTouch.first_utm_source,
-            first_utm_medium:          firstTouch.first_utm_medium,
-            first_utm_campaign:        firstTouch.first_utm_campaign,
-            first_landing_page:        firstTouch.first_landing_page,
-            first_referrer_domain:     firstTouch.first_referrer_domain,
-            first_device_class:        firstTouch.first_device_class,
-            first_blog_post_viewed:    firstTouch.first_blog_post_viewed,
-            first_service_viewed:      firstTouch.first_service_viewed,
-            first_clinician_viewed:    firstTouch.first_clinician_viewed
-        };
-
-        // Park the envelope on window so sw_push can merge it into every event.
-        window.__sw_context = context;
-
-        // -- Initial dataLayer push --
-        sw_push('sw_page_context', { page_view_trigger: true });
-
-        // -- Session-start one-shot --
-        if (session.is_new_session) {
-            sw_push('sw_session_start', {});
-        }
-
-        // -- First-visit one-shot --
-        // Path D fix: gate on !firstTouchWasAlreadySet (captured before
-        // maybeSetFirstTouchBootstrap ran). This fires sw_first_visit exactly
-        // once per device — on the single page-load that flipped first-touch
-        // from "not set" to "set". Prior Velo behavior used session.is_new_user
-        // which fired on every page of a new user's first session (3-10x
-        // over-count). Aligned with masterPage.js intent comment.
-        if (!firstTouchWasAlreadySet) {
-            sw_push('sw_first_visit', {});
-        }
-
-        // -- Phase 3.3: Forms ---------------------------------------------
-        // generate_lead fires on /confirmation (the single success URL for
-        // every Wix form on the site), keyed off sessionStorage attribution
-        // written when the user clicked submit. Abandonment + form_start
-        // listeners get wired once per page load; SPA-nav re-bootstrap
-        // re-wires for new-page forms.
-        try { maybeFireGenerateLead(normalizedPath); } catch (e) { /* non-fatal */ }
-        try { initFormListenersWhenReady();         } catch (e) { /* non-fatal */ }
-        try { initFormAbandonmentListeners();       } catch (e) { /* non-fatal */ }
-
-        // -- Phase 3.4: Screeners ---------------------------------------
-        // The screener tools at /asrs, /y-bocs, /aq-10, /esq-r, /phq-9,
-        // /gad-7 run inside Wix HTML embed iframes hosted on
-        // *.filesusr.com -- cross-origin to the parent page. The bundle
-        // cannot reach into those iframes, so each screener's HTML embed
-        // is responsible for posting a message to the parent on submit;
-        // this listener catches it and forwards as
-        // assessment_score_interaction. Idempotent -- safe to call on
-        // every SPA-nav re-bootstrap.
-        try { initScreenerListener();              } catch (e) { /* non-fatal */ }
-
-        // -- Phase 2c.x: Click context handler ---------------------------
-        try { initClickContext();                  } catch (e) { /* non-fatal */ }
-    }
-
-    // ------------------------------------------------------------------------
-    // Trigger: fire bootstrap as soon as the DOM is far enough along for
-    // document.referrer and window.location to be authoritative. In HEAD
-    // context this is typically immediate (DOM is parsing, but location +
-    // referrer are already settled). If readyState is 'loading', defer to
-    // DOMContentLoaded for a belt-and-suspenders guarantee.
-    // ------------------------------------------------------------------------
-    function initBootstrap() {
-        try { bootstrapTracking(); }
-        catch (err) {
-            // Tracking must never crash the page. Log and bail.
-            if (typeof console !== 'undefined') {
-                console.warn('[sw] bootstrap failed:', err);
-            }
-        }
-    }
-
-    // Run bootstrap SYNCHRONOUSLY. As a HEAD custom embed this executes during
-    // head parsing, before GTM's async gtm.js fetches — which means our dataLayer
-    // pushes (sw_page_context, sw_session_start, sw_first_visit) are queued
-    // before GTM reads the queue. The IIFE-level __sw_bootstrap_loaded guard at
-    // the top of this file prevents re-entry if the embed is injected twice.
-    initBootstrap();
-
-    // ------------------------------------------------------------------------
-    // SPA nav hook — Wix uses client-side nav for in-site links. We patch
-    // history.pushState and listen for popstate, dispatching a custom
-    // sw:navigate event that re-runs bootstrap. This causes session_page_count
-    // to increment and sw_page_context to re-fire with the new page_path.
-    //
-    // sw_first_visit and sw_session_start are gated by session-state flags,
-    // so they don't re-fire on SPA nav — only the page-context event does.
-    // ------------------------------------------------------------------------
-    (function patchHistory() {
-        try {
-            const origPushState = history.pushState;
-            const origReplaceState = history.replaceState;
-
-            history.pushState = function () {
-                const result = origPushState.apply(this, arguments);
-                window.dispatchEvent(new Event('sw:navigate'));
-                return result;
-            };
-
-            history.replaceState = function () {
-                const result = origReplaceState.apply(this, arguments);
-                window.dispatchEvent(new Event('sw:navigate'));
-                return result;
-            };
-
-            window.addEventListener('popstate', function () {
-                window.dispatchEvent(new Event('sw:navigate'));
-            });
-
-            window.addEventListener('sw:navigate', function () {
-                // Re-run bootstrap. initSessionContext handles continuing-session
-                // increments; first-touch is idempotent; session/first-visit
-                // one-shots are gated by stored flags.
-                initBootstrap();
-            });
-        } catch (err) {
-            if (typeof console !== 'undefined') {
-                console.warn('[sw] SPA nav patch failed:', err);
-            }
-        }
-    })();
-
-    // ------------------------------------------------------------------------
-    // Expose the canonical dataLayer-push helper for later-phase DOM listeners
-    // (forms, screeners, etc.) to call. Everything else stays private to the
-    // IIFE -- callers should never reach into session/scoring/taxonomy state
-    // directly; they go through sw_push.
-    // ------------------------------------------------------------------------
-    window.sw_push = sw_push;
-
-
     // ====== sw-forms ======
 // ============================================================================
 // sw-forms.js — Form interaction listeners (form_start, generate_lead, form_abandonment)
@@ -2065,6 +1845,7 @@ function initFormAbandonmentListeners() {
     });
 }
 
+
     // ====== sw-screeners ======
 // ============================================================================
 // sw-screeners.js — Phase 3.4 (Option-2 privacy posture, 2026-04-25)
@@ -2206,5 +1987,283 @@ function initScreenerListener() {
     window.__sw_screeners_listener_installed = true;
     window.addEventListener('message', handleScreenerMessage);
 }
+
+    // ========================================================================
+    // Bootstrap — adapted from masterPage.js
+    // ========================================================================
+    // Computes session/page/user context envelope, stamps it on window.__sw_context,
+    // and fires sw_page_context. On a brand-new user, also fires sw_first_visit.
+    // On a brand-new session, also fires sw_session_start.
+    //
+    // Path D changes from the Velo original:
+    //   - wixLocation.path/url  -> window.location.pathname
+    //   - $w.onReady            -> DOMContentLoaded / immediate-ready
+    //   - SPA nav hook          -> history.pushState patch + popstate listener
+    //   - Removed unused imports (wix-window was never referenced in body)
+    // ========================================================================
+    function bootstrapTracking() {
+        if (typeof window === 'undefined') return;   // SSR guard (defensive)
+        window.dataLayer = window.dataLayer || [];
+
+        // -- Gather raw page signals --
+        // Path D: pathname comes straight from window.location, lowercased and
+        // trailing-slash-trimmed to normalize against the taxonomy tables.
+        const rawPath = (window.location && window.location.pathname) || '/';
+        const normalizedPath = rawPath.toLowerCase().replace(/\/$/, '') || '/';
+        const search = (window.location && window.location.search) || '';
+        const referrer = (typeof document !== 'undefined' && document.referrer) || '';
+        const userAgent = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+
+        const utm = getUtmParams(search);
+        const pageType = getPageType(normalizedPath);
+        const deviceClass = getDeviceClass(userAgent);
+        const trafficSource = getTrafficSource(referrer, utm);
+        const referrerDomain = getReferrerDomain(referrer);
+
+        // -- First-touch bootstrap (idempotent; no-op on returning visitors) --
+        // Path D fix: capture whether first-touch was already persisted BEFORE
+        // we call maybeSetFirstTouchBootstrap. This lets sw_first_visit fire
+        // exactly once per device (the localStorage scope) instead of once per
+        // page of a new user's first session. Matches the masterPage.js comment
+        // "Fires exactly once per device (controlled by first_traffic_source
+        // being set)." Gate below reads this flag instead of session.is_new_user.
+        const firstTouchWasAlreadySet = safeGetLocal('sw_ft_traffic_source', null) != null;
+
+        maybeSetFirstTouchBootstrap(normalizedPath, referrer, utm, userAgent);
+
+        // -- Session context --
+        const session = initSessionContext(normalizedPath, referrer, utm);
+
+        // -- Path taxonomy lookups --
+        let serviceAttrs = {};
+        let clinicianAttrs = {};
+        let assessmentAttrs = {};
+        if (SERVICE_BY_PATH[normalizedPath])    serviceAttrs    = SERVICE_BY_PATH[normalizedPath];
+        if (CLINICIAN_BY_PATH[normalizedPath])  clinicianAttrs  = CLINICIAN_BY_PATH[normalizedPath];
+        if (ASSESSMENT_BY_PATH[normalizedPath]) assessmentAttrs = ASSESSMENT_BY_PATH[normalizedPath];
+
+        // -- Phase 2c.x: Blog post context (DOM scrape on /post/<slug>) ---
+        let blogAttrs = {};
+        if (pageType === 'blog_post') {
+            try { blogAttrs = extractBlogContext(normalizedPath); } catch (e) { /* leave blank */ }
+        }
+
+        // -- Derived user properties from the scoring engine --
+        const userProps = getAllUserProperties();
+        const counts = getAllCounts();
+        const firstTouch = getAllFirstTouchAttrs();
+
+        // -- Build the context envelope --
+        const context = {
+            // Page-scope
+            page_type:            pageType,
+            page_path:            normalizedPath,
+            page_location:        (window.location && window.location.href) || '',
+
+            // Session-scope
+            session_id:           session.session_id,
+            session_number:       session.session_number,
+            is_new_user:          session.is_new_user,
+            is_new_session:       session.is_new_session,
+            session_start_ts_ms:  session.session_start_ts_ms,
+            entry_method:         session.entry_method,
+            entry_page:           session.entry_page,
+            session_page_count:   session.session_page_count,
+
+            // Device / traffic
+            device_class:         deviceClass,
+            traffic_source:       trafficSource,
+            referrer_domain:      referrerDomain,
+            utm_source:           utm.utm_source   || '',
+            utm_medium:           utm.utm_medium   || '',
+            utm_campaign:         utm.utm_campaign || '',
+            utm_content:          utm.utm_content  || '',
+            utm_term:             utm.utm_term     || '',
+
+            // Service / clinician / assessment (populated only on matching paths)
+            service_name:              serviceAttrs.service_name              || '',
+            service_category:          serviceAttrs.service_category          || '',
+            service_variant:           serviceAttrs.service_variant           || '',
+            service_modality:          serviceAttrs.service_modality          || '',
+            clinician_name:            clinicianAttrs.clinician_name          || '',
+            clinician_role:            clinicianAttrs.clinician_role          || '',
+            clinician_specialty_primary: clinicianAttrs.clinician_specialty_primary || '',
+            clinician_primary_service: clinicianAttrs.clinician_primary_service || '',
+            clinician_specialties:     Array.isArray(clinicianAttrs.clinician_specialties)
+                                        ? clinicianAttrs.clinician_specialties.join(',')
+                                        : (clinicianAttrs.clinician_specialties || ''),
+            clinician_takes_insurance: typeof clinicianAttrs.clinician_takes_insurance === 'boolean'
+                                        ? clinicianAttrs.clinician_takes_insurance : '',
+            clinician_accepting_new:   typeof clinicianAttrs.clinician_accepting_new === 'boolean'
+                                        ? clinicianAttrs.clinician_accepting_new : '',
+            assessment_name:           assessmentAttrs.assessment_name        || '',
+            assessment_category:       assessmentAttrs.assessment_category    || '',
+            assessment_age_range:      assessmentAttrs.assessment_age_range   || '',
+            assessment_self_scoring:   typeof assessmentAttrs.assessment_self_scoring === 'boolean'
+                                        ? assessmentAttrs.assessment_self_scoring : '',
+
+            // Phase 2c.x: Blog post (populated only on /post/<slug> pages)
+            post_slug:                 blogAttrs.post_slug                || '',
+            post_title:                blogAttrs.post_title               || '',
+            post_category:             blogAttrs.post_category            || '',
+            post_author:               blogAttrs.post_author              || '',
+            post_tags:                 blogAttrs.post_tags                || '',
+            post_word_count:           blogAttrs.post_word_count          || 0,
+            post_reading_time_minutes: blogAttrs.post_reading_time_minutes || 0,
+            post_publish_date:         blogAttrs.post_publish_date        || '',
+            post_days_since_publish:   blogAttrs.post_days_since_publish  || 0,
+            post_update_date:          blogAttrs.post_update_date         || '',
+            post_reviewed_by:          blogAttrs.post_reviewed_by         || '',
+            post_topic_cluster:        blogAttrs.post_topic_cluster       || '',
+            post_funnel_stage:         blogAttrs.post_funnel_stage        || '',
+
+            // Derived user properties
+            primary_topic_cluster:     userProps.primary_topic_cluster,
+            topic_confidence:          userProps.topic_confidence,
+            primary_service_interest:  userProps.primary_service_interest,
+            service_confidence:        userProps.service_confidence,
+            primary_modality:          userProps.primary_modality,
+            modality_confidence:       userProps.modality_confidence,
+
+            // Cumulative counts
+            assessments_count:         counts.assessments_count,
+            modalities_count:          counts.modalities_count,
+            services_count:            counts.services_count,
+            blog_posts_count:          counts.blog_posts_count,
+
+            // First-touch (all 10 attributes — blanks until set)
+            first_traffic_source:      firstTouch.first_traffic_source,
+            first_utm_source:          firstTouch.first_utm_source,
+            first_utm_medium:          firstTouch.first_utm_medium,
+            first_utm_campaign:        firstTouch.first_utm_campaign,
+            first_landing_page:        firstTouch.first_landing_page,
+            first_referrer_domain:     firstTouch.first_referrer_domain,
+            first_device_class:        firstTouch.first_device_class,
+            first_blog_post_viewed:    firstTouch.first_blog_post_viewed,
+            first_service_viewed:      firstTouch.first_service_viewed,
+            first_clinician_viewed:    firstTouch.first_clinician_viewed
+        };
+
+        // Park the envelope on window so sw_push can merge it into every event.
+        window.__sw_context = context;
+
+        // -- Initial dataLayer push --
+        sw_push('sw_page_context', { page_view_trigger: true });
+
+        // -- Session-start one-shot --
+        if (session.is_new_session) {
+            sw_push('sw_session_start', {});
+        }
+
+        // -- First-visit one-shot --
+        // Path D fix: gate on !firstTouchWasAlreadySet (captured before
+        // maybeSetFirstTouchBootstrap ran). This fires sw_first_visit exactly
+        // once per device — on the single page-load that flipped first-touch
+        // from "not set" to "set". Prior Velo behavior used session.is_new_user
+        // which fired on every page of a new user's first session (3-10x
+        // over-count). Aligned with masterPage.js intent comment.
+        if (!firstTouchWasAlreadySet) {
+            sw_push('sw_first_visit', {});
+        }
+
+        // -- Phase 3.3: Forms ---------------------------------------------
+        // generate_lead fires on /confirmation (the single success URL for
+        // every Wix form on the site), keyed off sessionStorage attribution
+        // written when the user clicked submit. Abandonment + form_start
+        // listeners get wired once per page load; SPA-nav re-bootstrap
+        // re-wires for new-page forms.
+        try { maybeFireGenerateLead(normalizedPath); } catch (e) { /* non-fatal */ }
+        try { initFormListenersWhenReady();         } catch (e) { /* non-fatal */ }
+        try { initFormAbandonmentListeners();       } catch (e) { /* non-fatal */ }
+
+        // -- Phase 3.4: Screeners ---------------------------------------
+        // The screener tools at /asrs, /y-bocs, /aq-10, /esq-r, /phq-9,
+        // /gad-7 run inside Wix HTML embed iframes hosted on
+        // *.filesusr.com -- cross-origin to the parent page. The bundle
+        // cannot reach into those iframes, so each screener's HTML embed
+        // is responsible for posting a message to the parent on submit;
+        // this listener catches it and forwards as
+        // assessment_score_interaction. Idempotent -- safe to call on
+        // every SPA-nav re-bootstrap.
+        try { initScreenerListener();              } catch (e) { /* non-fatal */ }
+
+        // -- Phase 2c.x: Click context handler ---------------------------
+        try { initClickContext();                  } catch (e) { /* non-fatal */ }
+    }
+
+    // ------------------------------------------------------------------------
+    // Trigger: fire bootstrap as soon as the DOM is far enough along for
+    // document.referrer and window.location to be authoritative. In HEAD
+    // context this is typically immediate (DOM is parsing, but location +
+    // referrer are already settled). If readyState is 'loading', defer to
+    // DOMContentLoaded for a belt-and-suspenders guarantee.
+    // ------------------------------------------------------------------------
+    function initBootstrap() {
+        try { bootstrapTracking(); }
+        catch (err) {
+            // Tracking must never crash the page. Log and bail.
+            if (typeof console !== 'undefined') {
+                console.warn('[sw] bootstrap failed:', err);
+            }
+        }
+    }
+
+    // Run bootstrap SYNCHRONOUSLY. As a HEAD custom embed this executes during
+    // head parsing, before GTM's async gtm.js fetches — which means our dataLayer
+    // pushes (sw_page_context, sw_session_start, sw_first_visit) are queued
+    // before GTM reads the queue. The IIFE-level __sw_bootstrap_loaded guard at
+    // the top of this file prevents re-entry if the embed is injected twice.
+    initBootstrap();
+
+    // ------------------------------------------------------------------------
+    // SPA nav hook — Wix uses client-side nav for in-site links. We patch
+    // history.pushState and listen for popstate, dispatching a custom
+    // sw:navigate event that re-runs bootstrap. This causes session_page_count
+    // to increment and sw_page_context to re-fire with the new page_path.
+    //
+    // sw_first_visit and sw_session_start are gated by session-state flags,
+    // so they don't re-fire on SPA nav — only the page-context event does.
+    // ------------------------------------------------------------------------
+    (function patchHistory() {
+        try {
+            const origPushState = history.pushState;
+            const origReplaceState = history.replaceState;
+
+            history.pushState = function () {
+                const result = origPushState.apply(this, arguments);
+                window.dispatchEvent(new Event('sw:navigate'));
+                return result;
+            };
+
+            history.replaceState = function () {
+                const result = origReplaceState.apply(this, arguments);
+                window.dispatchEvent(new Event('sw:navigate'));
+                return result;
+            };
+
+            window.addEventListener('popstate', function () {
+                window.dispatchEvent(new Event('sw:navigate'));
+            });
+
+            window.addEventListener('sw:navigate', function () {
+                // Re-run bootstrap. initSessionContext handles continuing-session
+                // increments; first-touch is idempotent; session/first-visit
+                // one-shots are gated by stored flags.
+                initBootstrap();
+            });
+        } catch (err) {
+            if (typeof console !== 'undefined') {
+                console.warn('[sw] SPA nav patch failed:', err);
+            }
+        }
+    })();
+
+    // ------------------------------------------------------------------------
+    // Expose the canonical dataLayer-push helper for later-phase DOM listeners
+    // (forms, screeners, etc.) to call. Everything else stays private to the
+    // IIFE — callers should never reach into session/scoring/taxonomy state
+    // directly; they go through sw_push.
+    // ------------------------------------------------------------------------
+    window.sw_push = sw_push;
 
 })();
