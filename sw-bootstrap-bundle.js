@@ -1988,6 +1988,281 @@ function initScreenerListener() {
     window.addEventListener('message', handleScreenerMessage);
 }
 
+    // ====== sw-embeds ======
+// ============================================================================
+// sw-embeds.js — Phase 5 (Embed Tracking, 2026-04-29)
+// Listener for embed_* events from Wix HTML embed iframes (cross-origin
+// filesusr.com).
+// ============================================================================
+// Wix HTML embeds render inside cross-origin iframes hosted at
+// https://www-scienceworkshealth-com.filesusr.com. The parent bundle's
+// document-level click/form listeners can't see DOM events inside those
+// iframes — that's a hard browser security boundary. Phase 5 closes the
+// "dark zone" by having each embed paste a small wrapper snippet that
+// auto-emits parent.postMessage on click/focus/submit; this listener catches
+// those messages on the parent side, applies origin + schema + privacy
+// filters, and forwards as embed_* events through sw_push (which merges the
+// __sw_context envelope automatically).
+//
+// EVENT FAMILY (v1):
+//   embed_click             — <button> or [data-sw-track] click
+//   embed_link_click        — <a> click (split off because anchors carry href
+//                             metadata; mirrors the cta_click vs outbound_click
+//                             distinction the bundle already makes for parent
+//                             clicks)
+//   embed_form_field_focus  — <input>/<textarea>/<select> focus inside an
+//                             embed-internal <form>
+//   embed_form_submit       — embed-internal <form> submit
+//
+// PRIVACY POSTURE (locked 2026-04-29 per Phase 5 spec § 5):
+//   - text fields are trimmed and clamped to 100 chars
+//   - href is clamped to 500 chars (query string stripped if length exceeds)
+//   - track_label clamped to 50 chars
+//   - form_id and field_name clamped to 80 chars
+//   - field_type must be in an allowlist; anything else collapses to 'other'
+//   - FORM FIELD VALUES are never read by the wrapper and never accepted by
+//     this listener — if a malformed wrapper sends payload.value, the field
+//     is silently dropped and a console.warn fires as a debugging breadcrumb
+//   - clipboard contents are never tracked
+//   - email/phone literals inside button labels are NOT auto-redacted
+//     (the 100-char cap is the only protection); marketing should not put
+//     literal contact strings in a CTA label — see OPERATIONS.md
+//
+// Emitter contract (paste at top of any HTML embed body — see
+// phase5-artifacts/embed-tracking-wrapper.html for the canonical snippet,
+// identical across all retrofitted embeds):
+//
+//   <script>
+//   var EMBED_ID = 'home-cta-bar-mid';   // ← change this per embed
+//   // ... wrapper auto-installs capture-phase listeners on click/focusin/submit
+//   //     and emits parent.postMessage with the universal envelope:
+//   //     { sw_event, embed_id, embed_path, timestamp_ms, payload }
+//   </script>
+//
+// COEXISTENCE WITH sw-screeners:
+//   sw-screeners listens for sw_event === 'assessment_score_interaction';
+//   sw-embeds listens for sw_event matching /^embed_[a-z_]+$/. Both attach
+//   their own message handler to window — each silently drops messages not
+//   in its event family. No overlap, independent dedupe windows.
+//
+// DEFENSES (parent-side, applied in order):
+//   1. Origin allowlist — only filesusr.com passes; all other origins
+//      (and the special "null" string for sandboxed iframes) drop silently.
+//   2. Schema gate — data must be an object with sw_event matching
+//      /^embed_[a-z_]+$/, embed_id a non-empty string, embed_path a string,
+//      timestamp_ms a finite positive number, payload an object.
+//   3. embed_id sanitization — non-matching chars replaced with _, sliced
+//      to 80 chars.
+//   4. Dedupe — signature sw_event|embed_id|JSON.stringify(payload).
+//      Identical signature within 200ms drops. Window shorter than the
+//      screener's 1500ms because clicks are higher-frequency than screener
+//      submits.
+//   5. Privacy strip — see § 5 of the spec; applied to every payload field
+//      regardless of what the wrapper sent.
+//   6. Push — sw_push(data.sw_event, finalPayload) with embed_id and
+//      parent_path decoration. sw_push merges __sw_context downstream.
+//
+// OBSERVABILITY (window globals; smoke-test one-liner in REFERENCE.md):
+//   window.__sw_embeds_listener_installed  — true once handler attached
+//   window.__sw_embed_msgs_seen            — counter of accepted msgs (passed
+//                                            origin + schema gates AND
+//                                            survived dedupe + privacy strip)
+//   window.__sw_embed_last_event           — { ts, embed_id, sw_event,
+//                                              payload } of last accepted msg
+//   window.__sw_embed_msgs_dropped         — counter of dropped msgs (origin,
+//                                            schema, dedupe, or privacy fail);
+//                                            useful for debugging stuck embeds
+// ============================================================================
+
+const SW_EMBED_ORIGIN     = 'https://www-scienceworkshealth-com.filesusr.com';
+const SW_EMBED_DEDUPE_MS  = 200;
+const SW_EMBED_ID_RE      = /^embed_[a-z_]+$/;
+const SW_EMBED_ID_CHAR_RE = /[^a-z0-9_-]/g;
+const SW_EMBED_FIELD_TYPES = {
+    text: 1, email: 1, tel: 1, number: 1, password: 1,
+    textarea: 1, select: 1, checkbox: 1, radio: 1,
+    date: 1, time: 1, url: 1, search: 1, other: 1
+};
+var __sw_embed_last_sig   = '';
+var __sw_embed_last_ts    = 0;
+
+function sanitizeEmbedId(raw) {
+    if (typeof raw !== 'string') return '';
+    return raw.toLowerCase().replace(SW_EMBED_ID_CHAR_RE, '_').slice(0, 80);
+}
+
+function clampString(raw, max) {
+    if (typeof raw !== 'string') return '';
+    return raw.slice(0, max);
+}
+
+function trimAndClamp(raw, max) {
+    if (typeof raw !== 'string') return '';
+    return raw.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function sanitizeHref(raw) {
+    if (typeof raw !== 'string') return '';
+    if (raw.length <= 500) return raw;
+    // If overlong, prefer to keep the path and drop the query. If the path
+    // alone is still > 500, hard slice.
+    const qIdx = raw.indexOf('?');
+    if (qIdx > 0 && qIdx <= 500) return raw.slice(0, qIdx);
+    return raw.slice(0, 500);
+}
+
+function sanitizeFieldType(raw) {
+    if (typeof raw !== 'string') return 'other';
+    const lower = raw.toLowerCase();
+    return SW_EMBED_FIELD_TYPES[lower] ? lower : 'other';
+}
+
+function bumpEmbedDropped() {
+    window.__sw_embed_msgs_dropped = (window.__sw_embed_msgs_dropped || 0) + 1;
+}
+
+function handleEmbedMessage(e) {
+    // 1) Origin gate -- only Wix HTML embed iframe origin
+    if (!e || e.origin !== SW_EMBED_ORIGIN) return;
+
+    const data = e.data;
+
+    // 2) Schema gate
+    if (!data || typeof data !== 'object') return;
+    if (typeof data.sw_event !== 'string' || !SW_EMBED_ID_RE.test(data.sw_event)) return;
+    if (typeof data.embed_id !== 'string' || data.embed_id.length === 0) {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') console.warn('[sw] embed message rejected: missing embed_id');
+        return;
+    }
+    if (typeof data.embed_path !== 'string') {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') console.warn('[sw] embed message rejected: missing embed_path');
+        return;
+    }
+    const tsRaw = Number(data.timestamp_ms);
+    if (!Number.isFinite(tsRaw) || tsRaw <= 0) {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') console.warn('[sw] embed message rejected: bad timestamp_ms');
+        return;
+    }
+    if (!data.payload || typeof data.payload !== 'object') {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') console.warn('[sw] embed message rejected: missing payload');
+        return;
+    }
+
+    // 3) embed_id sanitization
+    const embedId = sanitizeEmbedId(data.embed_id);
+    if (!embedId) {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') console.warn('[sw] embed message rejected: embed_id empty after sanitize');
+        return;
+    }
+
+    const swEvent  = data.sw_event;
+    const embedPath = clampString(data.embed_path, 200);
+
+    // 4) Dedupe (same exact event+id+payload within 200ms = drop)
+    const sig = swEvent + '|' + embedId + '|' + (function () {
+        try { return JSON.stringify(data.payload); }
+        catch (err) { return '[unstringifiable]'; }
+    })();
+    const now = Date.now();
+    if (sig === __sw_embed_last_sig && (now - __sw_embed_last_ts) < SW_EMBED_DEDUPE_MS) {
+        bumpEmbedDropped();
+        return;
+    }
+    __sw_embed_last_sig = sig;
+    __sw_embed_last_ts  = now;
+
+    // 5) Privacy strip — defensively whitelist every field, regardless of
+    // what the wrapper sent. Form field VALUES are never accepted; if the
+    // wrapper attempted to send a `value` field, drop it loudly.
+    const rawPayload = data.payload;
+    const cleanPayload = {};
+
+    if ('value' in rawPayload) {
+        if (typeof console !== 'undefined') {
+            console.warn('[sw] embed wrapper sent payload.value — dropped. Form values must never leave the iframe. Update the emitter.');
+        }
+        // Don't return — strip the field but accept the rest.
+    }
+
+    if (typeof rawPayload.tag === 'string') {
+        cleanPayload.tag = clampString(rawPayload.tag.toUpperCase(), 16);
+    }
+    if (typeof rawPayload.text === 'string') {
+        cleanPayload.text = trimAndClamp(rawPayload.text, 100);
+    }
+    if (typeof rawPayload.href === 'string') {
+        cleanPayload.href = sanitizeHref(rawPayload.href);
+    }
+    if (typeof rawPayload.track_label === 'string') {
+        cleanPayload.track_label = clampString(rawPayload.track_label, 50);
+    }
+    if (typeof rawPayload.is_external === 'boolean') {
+        cleanPayload.is_external = rawPayload.is_external;
+    }
+    if (typeof rawPayload.opens_new_tab === 'boolean') {
+        cleanPayload.opens_new_tab = rawPayload.opens_new_tab;
+    }
+    if (typeof rawPayload.link_rel === 'string') {
+        cleanPayload.link_rel = clampString(rawPayload.link_rel, 80);
+    }
+    if (typeof rawPayload.form_id === 'string') {
+        cleanPayload.form_id = clampString(rawPayload.form_id, 80);
+    }
+    if (typeof rawPayload.field_name === 'string') {
+        cleanPayload.field_name = clampString(rawPayload.field_name, 80);
+    }
+    if ('field_type' in rawPayload) {
+        cleanPayload.field_type = sanitizeFieldType(rawPayload.field_type);
+    }
+
+    // 6) Build final payload + push. Add embed_id, embed_path, parent_path
+    // decoration here. parent_path is the parent window's pathname, distinct
+    // from embed_path (which is the iframe's own pathname, almost always
+    // /html/<hash>.html — kept for forensic value, low analytics signal).
+    const parentPath = (window.location && window.location.pathname || '').toLowerCase().replace(/\/$/, '') || '/';
+
+    const finalPayload = {
+        embed_id:    embedId,
+        embed_path:  embedPath,
+        parent_path: parentPath
+    };
+    // Merge cleaned payload keys (after the envelope keys so a malformed
+    // wrapper can't overwrite embed_id or parent_path).
+    for (const k in cleanPayload) {
+        if (Object.prototype.hasOwnProperty.call(cleanPayload, k)) {
+            if (k === 'embed_id' || k === 'embed_path' || k === 'parent_path') continue;
+            finalPayload[k] = cleanPayload[k];
+        }
+    }
+
+    try {
+        sw_push(swEvent, finalPayload);
+        window.__sw_embed_msgs_seen = (window.__sw_embed_msgs_seen || 0) + 1;
+        window.__sw_embed_last_event = {
+            ts: now,
+            embed_id: embedId,
+            sw_event: swEvent,
+            payload: finalPayload
+        };
+    } catch (err) {
+        bumpEmbedDropped();
+        if (typeof console !== 'undefined') {
+            console.warn('[sw] embed push failed:', err);
+        }
+    }
+}
+
+function initEmbedListener() {
+    if (window.__sw_embeds_listener_installed) return;
+    window.__sw_embeds_listener_installed = true;
+    window.addEventListener('message', handleEmbedMessage);
+}
+
     // ========================================================================
     // Bootstrap — adapted from masterPage.js
     // ========================================================================
@@ -2186,6 +2461,20 @@ function initScreenerListener() {
         // assessment_score_interaction. Idempotent -- safe to call on
         // every SPA-nav re-bootstrap.
         try { initScreenerListener();              } catch (e) { /* non-fatal */ }
+
+        // -- Phase 5: Embed tracking ------------------------------------
+        // Same cross-origin pattern as Phase 3.4, generalized: any Wix
+        // HTML embed (filesusr.com iframe) on the site can paste the
+        // canonical wrapper snippet (phase5-artifacts/embed-tracking-
+        // wrapper.html) at the top of its body and instantly opt into
+        // tracking. Wrapper auto-emits parent.postMessage on click,
+        // focusin, and submit; this listener applies origin + schema +
+        // privacy filters and forwards as embed_click,
+        // embed_link_click, embed_form_field_focus, or embed_form_submit
+        // through sw_push. Idempotent -- safe to call on every SPA-nav
+        // re-bootstrap. Coexists with initScreenerListener -- each owns
+        // its own message-event family with no overlap.
+        try { initEmbedListener();                 } catch (e) { /* non-fatal */ }
 
         // -- Phase 2c.x: Click context handler ---------------------------
         try { initClickContext();                  } catch (e) { /* non-fatal */ }
