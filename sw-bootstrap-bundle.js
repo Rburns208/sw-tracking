@@ -2495,7 +2495,7 @@ function initEmbedListener() {
                     else if (href.indexOf('/contact') > -1) label = (text.toLowerCase().indexOf('start today') > -1) ? 'start_today' : 'book_consult';
                     else if (href.indexOf('/meet-us') > -1 || href.indexOf('/team') > -1 || href.indexOf('/meet') > -1) label = 'meet_team';
                     if (!label) return;
-                    sw_push('cta_click', {
+                    sw_push('info_cta_click', {
                         cta_label: label,
                         cta_location: swNearestSectionLabel(a),
                         cta_text: text,
