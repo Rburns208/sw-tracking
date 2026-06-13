@@ -375,6 +375,16 @@ const MODALITIES = [
     'multiple_modalities', 'unassigned'
 ];
 
+
+// Layer A: derive a coarse service line from an /info slug (keyword rule).
+function getInfoService(slug) {
+    const s = (slug || '').toLowerCase();
+    if (s.indexOf('testing') > -1 || s.indexOf('assessment') > -1 || s.indexOf('evaluation') > -1 || s.indexOf('diagnos') > -1) return 'assessment';
+    if (s.indexOf('coaching') > -1 || s.indexOf('coach') > -1) return 'coaching';
+    if (s.indexOf('therapy') > -1 || s.indexOf('cbt') > -1 || s.indexOf('erp') > -1 || s.indexOf('trauma') > -1 || s.indexOf('ocd') > -1 || s.indexOf('insomnia') > -1 || s.indexOf('emdr') > -1 || s.indexOf('anxiety') > -1 || s.indexOf('affirming') > -1 || s.indexOf('support') > -1) return 'therapy';
+    return 'other';
+}
+
     // ====== sw-tracking ======
 // ============================================================================
 // sw-tracking.js — Core primitives for ScienceWorks event tracking
@@ -400,6 +410,7 @@ function getPageType(pathname) {
     if (p.startsWith('/post/')) return 'blog_post';
     if (p === '/contact') return 'contact';
     if (p === '/careers') return 'careers';
+    if (p.startsWith('/info/')) return 'info_landing';
     if (SERVICE_BY_PATH[p]) return 'service';
     if (CLINICIAN_BY_PATH[p]) return 'clinician';
     if (ASSESSMENT_BY_PATH[p]) return 'assessment_tool';
@@ -1654,20 +1665,32 @@ function handleFormSubmitClick(containerEl) {
 function maybeFireGenerateLead(currentPath) {
     if (currentPath !== '/confirmation') return;
 
+    // Layer C: attribute the lead to the /info page that drove it (if recent).
+    let leadInfo = {};
+    try {
+        const __r = window.sessionStorage.getItem('sw_last_info_topic');
+        if (__r) {
+            const __o = JSON.parse(__r);
+            if (__o && __o.topic && (Date.now() - (__o.ts || 0)) <= 1800000) {
+                leadInfo = { lead_source_info_topic: __o.topic, lead_source_info_service: __o.service || '' };
+            }
+        }
+    } catch (e) {}
+
     const pending = readJSON('session', SW_FORM_PENDING_SUBMIT_KEY, null);
 
     if (!pending) {
         // Confirmation-page fallback: user landed here without a tracked
         // submit (deep link, refresh, or a submit we failed to instrument).
         // Still fire generate_lead so GA4 conversion counts stay complete.
-        sw_push('generate_lead', {
+        sw_push('generate_lead', Object.assign({
             form_name:               'unknown_form',
             form_type:               'other',
             lead_value_estimate:     0,
             currency:                'USD',
             value:                   0,
             _sw_attribution_source:  'confirmation_page_fallback'
-        });
+        }, leadInfo));
         return;
     }
 
@@ -1682,7 +1705,7 @@ function maybeFireGenerateLead(currentPath) {
         currency:                'USD',
         value:                   pending.lead_value_estimate || 0,
         _sw_attribution_source:  stale ? 'submit_click_stale' : 'submit_click_attribution'
-    }, pending.service_context || {}));
+    }, leadInfo, pending.service_context || {}));
 
     // Clear both keys — the journey is complete.
     try { window.sessionStorage.removeItem(SW_FORM_PENDING_SUBMIT_KEY); } catch (e) {}
@@ -2317,6 +2340,13 @@ function initEmbedListener() {
         if (CLINICIAN_BY_PATH[normalizedPath])  clinicianAttrs  = CLINICIAN_BY_PATH[normalizedPath];
         if (ASSESSMENT_BY_PATH[normalizedPath]) assessmentAttrs = ASSESSMENT_BY_PATH[normalizedPath];
 
+        // -- /info dynamic landing context (Layer A) --
+        let infoAttrs = {};
+        if (pageType === 'info_landing') {
+            const infoSlug = normalizedPath.slice(6);
+            infoAttrs = { info_topic: infoSlug, info_service: getInfoService(infoSlug) };
+        }
+
         // -- Phase 2c.x: Blog post context (DOM scrape on /post/<slug>) ---
         let blogAttrs = {};
         if (pageType === 'blog_post') {
@@ -2333,6 +2363,8 @@ function initEmbedListener() {
             // Page-scope
             page_type:            pageType,
             page_path:            normalizedPath,
+            info_topic:           infoAttrs.info_topic   || '',
+            info_service:         infoAttrs.info_service || '',
             page_location:        (window.location && window.location.href) || '',
 
             // Session-scope
@@ -2421,6 +2453,58 @@ function initEmbedListener() {
 
         // Park the envelope on window so sw_push can merge it into every event.
         window.__sw_context = context;
+
+        // -- Layer C: persist last /info topic for cross-page lead attribution --
+        if (pageType === 'info_landing' && infoAttrs.info_topic) {
+            try {
+                window.sessionStorage.setItem('sw_last_info_topic', JSON.stringify({
+                    topic: infoAttrs.info_topic, service: infoAttrs.info_service, ts: Date.now()
+                }));
+            } catch (e) {}
+        }
+
+        // -- Layer B: /info CTA click tracking (native Wix buttons; no embeds) --
+        function swNearestSectionLabel(el) {
+            try {
+                let e = el;
+                for (let i = 0; i < 14 && e; i++) {
+                    const h = e.querySelector && e.querySelector('h1,h2');
+                    if (h && (h.innerText || '').trim()) {
+                        return (h.innerText || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+                    }
+                    e = e.parentElement;
+                }
+            } catch (e) {}
+            return '';
+        }
+        function initInfoCtaListener() {
+            if (window.__sw_info_cta_wired) return;
+            window.__sw_info_cta_wired = true;
+            document.addEventListener('click', function (ev) {
+                try {
+                    const path = ((window.location && window.location.pathname) || '').toLowerCase();
+                    if (path.indexOf('/info/') !== 0) return;
+                    const a = ev.target && ev.target.closest && ev.target.closest('a[href], [class*="wixui-button"]');
+                    if (!a) return;
+                    let href = a.getAttribute('href') || '';
+                    if (!href && a.querySelector) { const inner = a.querySelector('a[href]'); if (inner) href = inner.getAttribute('href') || ''; }
+                    href = String(href);
+                    const text = ((a.innerText || a.textContent || '') + '').trim().slice(0, 60);
+                    let label = '';
+                    if (href.toLowerCase().indexOf('tel:') === 0) label = 'call';
+                    else if (href.indexOf('/contact') > -1) label = (text.toLowerCase().indexOf('start today') > -1) ? 'start_today' : 'book_consult';
+                    else if (href.indexOf('/meet-us') > -1 || href.indexOf('/team') > -1 || href.indexOf('/meet') > -1) label = 'meet_team';
+                    if (!label) return;
+                    sw_push('cta_click', {
+                        cta_label: label,
+                        cta_location: swNearestSectionLabel(a),
+                        cta_text: text,
+                        link_url: href.split('?')[0].slice(0, 80)
+                    });
+                } catch (e) {}
+            }, true);
+        }
+        try { initInfoCtaListener(); } catch (e) {}
 
         // -- Initial dataLayer push --
         sw_push('sw_page_context', { page_view_trigger: true });
