@@ -1517,6 +1517,1917 @@ function getAllCounts() {
     };
 }
 
+    // ====== sw-uid ======
+// ============================================================================
+// sw-uid.js — Stable first-party visitor identifier (sw_uid)
+// ============================================================================
+// STATUS: Build Wave 1 implementation (BW1-D / WS-D D5). Fleshes out the W0-6
+//         scaffold stub. OFFLINE build — wired into the bundle at Gate B1.
+//
+// PURPOSE
+// -------
+// sw_uid is the durable, write-once, first-party identifier that joins a
+// returning visitor's anonymous tracking activity to a LeadProfile after the
+// identity bridge ("capture-and-POST") fires on /confirmation. It is the join
+// key carried in the GA4 stream (PII-free) AND POSTed alongside the captured
+// profile to the first-party ingest endpoint.
+//
+// INVARIANTS (held by this implementation):
+//   1. WRITE-ONCE. Once `sw_uid` exists in localStorage it is NEVER
+//      overwritten — even across sessions, tabs, or bundle re-pins. A new
+//      uid is minted ONLY when the key is absent. (See getOrCreateSwUid.)
+//   2. NAMESPACED VALUE. Value shape is `u_` + a UUID, e.g.
+//      `u_3f9a1c2e-7b40-4d11-9e2a-8c6f0b1d4e55`. The `u_` prefix marks it as
+//      a user (visitor) id, distinct from session ids (`s_...`).
+//   3. CRYPTO PRIMARY, FALLBACK SECONDARY. crypto.randomUUID() when
+//      available; otherwise an RFC-4122-v4-shaped Math.random() fallback
+//      (NOT cryptographically strong, but collision-safe enough for a
+//      visitor id; mirrors the entropy posture sw-session.js already uses).
+//   4. STORAGE-SAFE. localStorage access can throw (private mode, quota,
+//      disabled). All reads/writes go through try/catch and degrade to an
+//      in-memory uid for the page's lifetime rather than throwing.
+//   5. RACE-SAFE BEFORE THE FIRST FORM. getOrCreateSwUid() is synchronous,
+//      idempotent, and memoised in-page, so any module (sw-forms, the
+//      breadcrumb writer, the GA4 push) can call it in any init order and
+//      get the SAME value. The first call on a first-ever pageview mints +
+//      persists; every later call returns the cached value. (See §RACE below.)
+//
+// §RACE — cross-tab first-load reconciliation
+//   localStorage has no atomic compare-and-set, so two tabs opened
+//   simultaneously on a first-ever visit can each read `null` and mint a
+//   different uid. To minimise fragmentation we (a) RE-CHECK storage is still
+//   empty immediately before writing, and (b) after writing, RE-READ and
+//   ADOPT whatever value actually landed in storage. Callers therefore
+//   converge on a single stored value within the function. Residual: a tab
+//   that finished getOrCreateSwUid() and cached its value in-memory BEFORE a
+//   second tab overwrote storage keeps its in-memory value for that page's
+//   life (next pageview self-heals from storage). This is a documented,
+//   bounded limitation — the only true fix is a server-issued id (adds a
+//   cookie/consent surface, deferred to WS-F). Same boundary WS-D §2.2.4 names.
+//
+// PRIVACY / COMPLIANCE
+//   sw_uid is an OPAQUE RANDOM TOKEN. It contains no PII, is not derived from
+//   any identifier, and is not linkable to a person without Store B access
+//   (WS-F Checkpoint 4 / WS-D §2.2.3). It is `ga4_allowed:true` — it rides GA4
+//   as a pseudonymous user-scoped dimension (see D6). This module MUST NOT
+//   read, capture, or store any PII. PII capture lives in sw-forms.js.
+//
+// STORAGE HELPERS — DELIBERATE SELF-CONTAINMENT (flag for HQ integration)
+//   sw-tracking.js exports safeGetLocal/safeSetLocal (L144-158). This module
+//   defines its OWN byte-identical internal guards instead of importing them.
+//   Rationale (a deliberate deviation from "reuse the shared helper", surfaced
+//   per CLAUDE.md rule 5): sw_uid is the lowest-level identity primitive and
+//   must be resolvable with NO cross-module init-order dependency — invariant
+//   5 (race-safe before the first form) is stronger if this module cannot be
+//   broken by sw-tracking.js loading later. At bundle-compile time HQ may wire
+//   _lsGet/_lsSet to the shared helpers if init order is guaranteed; the
+//   behaviour is identical. Documented, not hidden.
+// ============================================================================
+
+const SW_UID_LS_KEY = 'sw_uid';
+const SW_UID_PREFIX  = 'u_';
+
+// In-memory fallback / memo. Lives for the page's lifetime only. Serves both
+// INVARIANT 4 (degrade when storage throws) and INVARIANT 5 (memoise so
+// repeated calls across modules return the same value in-page). See §RACE.
+let __sw_uid_memory = null;
+
+// ----- Internal storage guards (mirror sw-tracking.js L144-158) -----------
+// Self-contained on purpose — see header "STORAGE HELPERS".
+
+function _lsGet(key, fallback) {
+    try {
+        if (typeof window === 'undefined' || !window.localStorage) return fallback;
+        const v = window.localStorage.getItem(key);
+        return v == null ? fallback : v;
+    } catch (e) { return fallback; }
+}
+
+function _lsSet(key, value) {
+    try {
+        if (typeof window === 'undefined' || !window.localStorage) return false;
+        window.localStorage.setItem(key, value);
+        return true;
+    } catch (e) { return false; }
+}
+
+// ----- Internal helpers ---------------------------------------------------
+
+// _uuidv4Fallback() -> string  (RFC-4122 v4 shape, Math.random()-based)
+// NOT cryptographically strong. Collision space is still 122 random bits, so
+// negligible collision risk for a visitor id. Mirrors sw-session.js's posture
+// of using Math.random() entropy when crypto is unavailable.
+function _uuidv4Fallback() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : ((r & 0x3) | 0x8);
+        return v.toString(16);
+    });
+}
+
+// _newUuid() -> string  (UUID, no prefix)
+// crypto.randomUUID() primary; Math.random() v4-shaped fallback.
+function _newUuid() {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch (e) { /* fall through to the Math.random fallback */ }
+    return _uuidv4Fallback();
+}
+
+// _isValidUid(v) -> boolean
+// Shape guard: `u_` prefix + a non-empty remainder. Used to reject a
+// corrupt/empty stored value (treat as "absent" -> re-mint).
+function _isValidUid(v) {
+    return typeof v === 'string'
+        && v.length > SW_UID_PREFIX.length
+        && v.slice(0, SW_UID_PREFIX.length) === SW_UID_PREFIX;
+}
+
+// ----- Public API ---------------------------------------------------------
+
+// getOrCreateSwUid() -> string
+// Returns the existing write-once sw_uid from localStorage, or mints + persists
+// a new one on first call. Idempotent within and across sessions. Never throws.
+function getOrCreateSwUid() {
+    // 0. In-page memo (INVARIANT 5). Same value to every caller this page,
+    //    even if localStorage is unavailable (INVARIANT 4).
+    if (__sw_uid_memory) return __sw_uid_memory;
+
+    // 1. WRITE-ONCE read. A valid stored value is returned UNCHANGED.
+    const existing = _lsGet(SW_UID_LS_KEY, null);
+    if (_isValidUid(existing)) {
+        __sw_uid_memory = existing;
+        return existing;
+    }
+
+    // 2. Mint a candidate.
+    let uid = SW_UID_PREFIX + _newUuid();
+
+    // 3. RACE re-check (see §RACE): another tab may have written between our
+    //    read (step 1) and now. If so, adopt theirs — do not overwrite.
+    const recheck = _lsGet(SW_UID_LS_KEY, null);
+    if (_isValidUid(recheck)) {
+        __sw_uid_memory = recheck;
+        return recheck;
+    }
+
+    // 4. Persist (guarded). On failure we keep the in-memory uid (INVARIANT 4).
+    _lsSet(SW_UID_LS_KEY, uid);
+
+    // 5. Adopt-what-landed: re-read and take whatever is actually in storage,
+    //    so a concurrent writer that beat us by microseconds wins for everyone.
+    const landed = _lsGet(SW_UID_LS_KEY, null);
+    if (_isValidUid(landed)) uid = landed;
+
+    // 6. Memoise + return.
+    __sw_uid_memory = uid;
+    return uid;
+}
+
+// peekSwUid() -> string|null
+// Non-minting read. Returns the current sw_uid if one exists (in-memory memo
+// or storage), else null. Use where you must NOT create an id as a side effect
+// (e.g. a pure analytics read that should not mint on a bot/first hit).
+function peekSwUid() {
+    if (__sw_uid_memory) return __sw_uid_memory;
+    const v = _lsGet(SW_UID_LS_KEY, null);
+    return _isValidUid(v) ? v : null;
+}
+
+// __resetSwUidMemoForTest() — test-only. Clears the in-page memo so a test can
+// simulate a fresh page load against a mocked localStorage. NOT used in prod.
+function __resetSwUidMemoForTest() {
+    __sw_uid_memory = null;
+}
+
+    // ====== sw-propensity ======
+// ============================================================================
+// sw-propensity.js — Glass-box lead-propensity scorer  (BW1-C / WS-C C5)
+// ============================================================================
+// Build Wave 1 implementation. Replaces the W0-6 stub.
+//
+// PURPOSE
+// -------
+// Given an assembled lead profile (the v1.0 §11 object the bridge POSTs),
+// compute a transparent propensity score in [0,100] + the top contributing
+// signals. "Glass-box" = every point traces to one named feature rule; the
+// returned `top_signals` IS the explanation (no hidden layer). Auditable, as a
+// YMYL behavioral-health practice requires.
+//
+// CONTRACT (G5 / FROZEN schema §10.3, §11.3/§11.4) — return shape:
+//   {
+//     score:       Number,   // 0-100 integer
+//     band:        String,   // 'low' | 'medium' | 'high'  (NOT cold/warm/hot)
+//     top_signals: [ { signal:String, points:Number, label:String }, ... ],
+//     method:      'heuristic',
+//     version:     String
+//   }
+//
+// PURITY: no DOM, no storage, no network, NO dataLayer/sw_push (WS-C C7 — every
+//   WS-C output is ga4_allowed:false; this module RETURNS an object the at-submit
+//   assembler reads, it never pushes). Deterministic for a given (profile,config).
+//
+// PII: name/email/raw message are NEVER read. Only non-identifying derived
+//   features (confidences, counts, categoricals, timestamps) feed the score, and
+//   top_signals carries human-readable labels only — never PII values.
+//
+// FEATURE SET F1-F8 — the shared WS-C <-> WS-G contract (see FEATURE-CONTRACT.md
+//   and config/propensity-weights.json). DEFAULT_CONFIG below mirrors that JSON
+//   verbatim so the module runs standalone in Velo (no JSON import); the test
+//   harness asserts parity between this constant and the JSON file.
+// ============================================================================
+
+const SW_PROPENSITY_VERSION = '1.0.0';
+
+// ----- DEFAULT_CONFIG — mirrors config/propensity-weights.json (keep in sync;
+//       parity asserted in tests/test_bw1c.mjs). STARTER weights: judgment
+//       calls, NOT fit to outcomes (no leakage). -----------------------------
+const DEFAULT_CONFIG = {
+    weights: {
+        F1_topic_confidence:    0.18,
+        F2_service_confidence:  0.12,
+        F3_modality_confidence: 0.08,
+        F4_engagement_breadth:  0.12,
+        F5_journey_length:      0.12,
+        F6_high_intent_views:   0.20,
+        F7_urgency_compression: 0.08,
+        F8_submit_context:      0.10
+    },
+    norm: {
+        F4_breadth_cap: 8,
+        F5_session_cap: 4,
+        F5_page_cap: 8,
+        F6_high_intent_cap: 4,
+        F7_urgency_window_hours: 72,
+        F8_attribution_quality: {
+            submit_click_attribution: 1.0,
+            submit_click_stale: 0.6,
+            confirmation_page_fallback: 0.3,
+            _default: 0.3
+        },
+        F8_form_type_factor: {
+            inquiry: 1.0, clinician_contact: 1.0, consult: 1.0,
+            newsletter: 0.2, careers: 0.1, other: 0.5, _default: 0.5
+        }
+    },
+    bands: { low_max_exclusive: 34, medium_max_exclusive: 67 },
+    top_signals: { min: 3, max: 5 }
+};
+
+// Human-readable labels for each feature (for top_signals.label).
+const FEATURE_LABELS = {
+    F1_topic_confidence:    'Clear topic of interest',
+    F2_service_confidence:  'Clear service interest',
+    F3_modality_confidence: 'Clear treatment-approach interest',
+    F4_engagement_breadth:  'Explored multiple pages/services',
+    F5_journey_length:      'Returning, multi-page visitor',
+    F6_high_intent_views:   'Decision-stage behavior (contact / clinician / screener)',
+    F7_urgency_compression: 'Moved quickly from first visit to inquiry',
+    F8_submit_context:      'Strong, well-attributed inquiry'
+};
+
+// ----- numeric helpers ----------------------------------------------------
+function clamp01(x) { const n = Number(x); if (!isFinite(n)) return 0; return n < 0 ? 0 : (n > 1 ? 1 : n); }
+function num(x) { const n = Number(x); return isFinite(n) ? n : 0; }
+function nonEmpty(s) { return typeof s === 'string' && s.trim().length > 0; }
+
+// Confidence fields carry 'unassigned' winners with confidence 0; treat any
+// non-finite / unassigned as 0.
+function confOf(profile, winnerKey, confKey) {
+    const w = profile[winnerKey];
+    if (!w || w === 'unassigned') return 0;
+    return clamp01(profile[confKey]);
+}
+
+// ----- F1..F8 feature extractors (each returns a normalized [0,1]) ---------
+// All read the FROZEN §11 storage names off the assembled profile object.
+
+function f1(profile)        { return confOf(profile, 'primaryTopicCluster', 'topicConfidence'); }
+function f2(profile)        { return confOf(profile, 'primaryServiceInterest', 'serviceConfidence'); }
+function f3(profile)        { return confOf(profile, 'primaryModality', 'modalityConfidence'); }
+
+function f4(profile, cfg) {
+    const breadth = num(profile.distinctServicesCount) + num(profile.distinctBlogsCount)
+                  + num(profile.distinctModalitiesCount) + num(profile.assessmentsCount);
+    return clamp01(breadth / cfg.norm.F4_breadth_cap);
+}
+
+function f5(profile, cfg) {
+    const sessTerm = clamp01((num(profile.sessionNumber) - 1) / Math.max(1, (cfg.norm.F5_session_cap - 1)));
+    const pageTerm = clamp01(num(profile.sessionPageCount) / cfg.norm.F5_page_cap);
+    return clamp01(0.5 * sessTerm + 0.5 * pageTerm);
+}
+
+function f6(profile, cfg) {
+    const inquiryTypes = { inquiry: 1, clinician_contact: 1, consult: 1 };
+    let count = 0;
+    if (inquiryTypes[profile.formType] || profile.pageAtSubmit === '/contact') count += 1; // viewed_contact
+    if (nonEmpty(profile.serviceAtSubmit))   count += 1; // service_context
+    if (nonEmpty(profile.clinicianAtSubmit)) count += 1; // clinician_context
+    if (num(profile.assessmentsCount) > 0)   count += 1; // assessment_engaged
+    if (nonEmpty(profile.leadSourceInfoTopic)) count += 1; // info_lead
+    return clamp01(count / cfg.norm.F6_high_intent_cap);
+}
+
+function f7(profile, cfg) {
+    const ms = num(profile.timeToConvertMs);
+    if (ms <= 0) return 0; // neutral when unknown (Phase-1 crude proxy)
+    const hours = ms / 3600000;
+    return clamp01(1 - (hours / cfg.norm.F7_urgency_window_hours));
+}
+
+function f8(profile, cfg) {
+    const aq = cfg.norm.F8_attribution_quality;
+    const ff = cfg.norm.F8_form_type_factor;
+    const attr = (profile.attributionSourceQuality in aq) ? aq[profile.attributionSourceQuality] : aq._default;
+    const form = (profile.formType in ff) ? ff[profile.formType] : ff._default;
+    return clamp01(attr * form);
+}
+
+// ----- band derivation ----------------------------------------------------
+function bandFor(score, cfg) {
+    if (score < cfg.bands.low_max_exclusive) return 'low';
+    if (score < cfg.bands.medium_max_exclusive) return 'medium';
+    return 'high';
+}
+
+// ----- Public API ---------------------------------------------------------
+// extractFeatures(profile, config) -> { F1..F8 } normalized [0,1].
+// Exposed so WS-G's at-submit feature_snapshot captures the SAME vector the
+// score was computed from (G3/G4 — no drift, no re-derivation).
+function extractFeatures(profile, config) {
+    const cfg = config || DEFAULT_CONFIG;
+    const p = profile || {};
+    return {
+        F1_topic_confidence:    f1(p),
+        F2_service_confidence:  f2(p),
+        F3_modality_confidence: f3(p),
+        F4_engagement_breadth:  f4(p, cfg),
+        F5_journey_length:      f5(p, cfg),
+        F6_high_intent_views:   f6(p, cfg),
+        F7_urgency_compression: f7(p, cfg),
+        F8_submit_context:      f8(p, cfg)
+    };
+}
+
+// computePropensity(profile, config) -> G5 output object.
+// Pure: no DOM/storage/network/dataLayer. Deterministic.
+function computePropensity(profile, config) {
+    const cfg = config || DEFAULT_CONFIG;
+    const feats = extractFeatures(profile, cfg);
+
+    // points contribution per feature = 100 * norm * weight (Σweights == 1).
+    const contributions = [];
+    let scoreFloat = 0;
+    for (const key in cfg.weights) {
+        if (!Object.prototype.hasOwnProperty.call(cfg.weights, key)) continue;
+        const w = cfg.weights[key];
+        const norm = clamp01(feats[key]);
+        const pts = 100 * norm * w;
+        scoreFloat += pts;
+        contributions.push({
+            signal: key,
+            points: Math.round(pts),
+            label: FEATURE_LABELS[key] || key
+        });
+    }
+
+    const score = Math.max(0, Math.min(100, Math.round(scoreFloat)));
+    const band = bandFor(score, cfg);
+
+    // top_signals: highest points first, drop zero-point features, cap at max.
+    const top_signals = contributions
+        .filter(function (c) { return c.points > 0; })
+        .sort(function (a, b) { return b.points - a.points; })
+        .slice(0, cfg.top_signals.max);
+
+    return {
+        score: score,
+        band: band,
+        top_signals: top_signals,
+        method: 'heuristic',
+        version: SW_PROPENSITY_VERSION
+    };
+}
+
+    // ====== feature-snapshot ======
+// ============================================================================
+// feature-snapshot.js — at-submit immutable feature snapshot  (BW1-C / WS-G G3)
+// ============================================================================
+// The training-row CLOSER. Heuristic features live in localStorage and keep
+// changing as the person browses; for training we need the feature values AS
+// THEY WERE at the moment of submit, frozen. The identity bridge (BW1-A) calls
+// buildFeatureSnapshot(profile) at submit and writes the result to the FLAT,
+// immutable `featureSnapshot` field on the LeadProfiles item (FROZEN schema
+// §11.3). Later it joins to the outcome label (by submissionId) to form one
+// (features, label) training row. WITHOUT this snapshot, the score is computed
+// but never recoverable as training data — a silent, permanent loss (WS-G §3.A).
+//
+// CONTRACT (FROZEN schema §10.4 / §11.3 `featureSnapshot`):
+//   object (immutable) = F1..Fn + score + version + ts.
+//
+// LEAKAGE (WS-G L1/L2/L4):
+//   - L1: only at-submit-known features are captured; nothing post-submit.
+//   - L2: `features` holds the RAW normalized vector; the Phase-5 model trains
+//         on `features`, NOT on `propensity.score` (kept for benchmarking only).
+//   - L4: this is written at submit, BEFORE any outcome field can mutate it;
+//         the snapshot is Object.freeze'd here and stored on an immutable item.
+//
+// PII (WS-C C7): the snapshot contains ONLY non-identifying derived features —
+//   confidences, counts, categoricals, a numeric urgency proxy. NEVER a name,
+//   email, phone, or message. (computePropensity already enforces this; this
+//   builder adds no PII.)  No dataLayer/sw_push — returns an object the bridge
+//   assembler reads.
+// ============================================================================
+
+const FEATURE_SNAPSHOT_VERSION = '1.0.0';
+
+// buildFeatureSnapshot(profile, config) -> frozen snapshot object.
+// Pure: no DOM/storage/network. `nowMs` injectable for deterministic tests.
+function buildFeatureSnapshot(profile, config, nowMs) {
+    var cfg = config || DEFAULT_CONFIG;
+    var features = extractFeatures(profile, cfg);   // normalized [0,1] vector — the training inputs (L2)
+    var propensity = computePropensity(profile, cfg); // composite score/band/top_signals — benchmark only
+
+    var ts = (typeof nowMs === 'number') ? nowMs : Date.now();
+
+    var snapshot = {
+        snapshot_version: FEATURE_SNAPSHOT_VERSION,
+        propensity_version: propensity.version || SW_PROPENSITY_VERSION,
+        method: propensity.method,         // 'heuristic'
+        ts: ts,                            // submit-time ms (immutability anchor)
+        features: features,                // F1..F8 normalized — model trains on THIS (L2)
+        score: propensity.score,           // benchmark only, NOT a model input
+        band: propensity.band
+    };
+
+    // Freeze so an accidental post-submit mutation throws in strict mode /
+    // is silently ignored otherwise — mechanical L4 guard.
+    if (Object.freeze) {
+        Object.freeze(snapshot.features);
+        Object.freeze(snapshot);
+    }
+    return snapshot;
+}
+
+// listSnapshotFeatureNames() -> ['F1_topic_confidence', ...]
+// Exposed for WS-G's export-merge so the training-row column order is stable.
+function listSnapshotFeatureNames() {
+    return Object.keys(extractFeatures({}, DEFAULT_CONFIG));
+}
+
+    // ====== sw-scoring-feed ======
+// ============================================================================
+// sw-scoring-feed.js — C2-parent: wire the DORMANT scoring write-path
+// ============================================================================
+// BW1-C / WS-C C2-parent.  Build Wave 1.
+//
+// THE PROBLEM (W0-1 confirmed DORMANT): sw-scoring.js DEFINES updateScore /
+// incrementCount / addDistinct but NOTHING in the deployed bundle ever calls
+// them, so sw_scores_topic/service/modality + sw_evcount_* + the distinct-count
+// keys are fed by nothing -> getWinner() returns 'unassigned' for everyone and
+// primaryTopicCluster/primaryServiceInterest/primaryModality (+ confidences)
+// are null for every lead. This module adds the CALL-SITES that feed the
+// ledgers at the page-classification point.
+//
+// RULE 5 (clone, do NOT re-derive): this module does NOT re-implement decay,
+// caps, the >=3-event gate, or any scoring math. It IMPORTS and CALLS the REAL
+// primitives from sw-scoring.js verbatim. The decay-then-add semantics already
+// give the "recent behavior dominates" property — no change needed. The only
+// new logic here is the mapping (classification -> which ledger/key/points) +
+// a once-per-device guard for the assessments TOTAL counter.
+//
+// PII: ledgers store classification SLUGS only (topic/service/modality tokens,
+// assessment names, blog slugs). NEVER a name/email/message. (WS-C C7.)
+//
+// IDEMPOTENCE: fires ONCE per page bootstrap (masterPage $w.onReady /
+// bundle bootstrapTracking runs once per page load). The score feeds are
+// decay-then-add (repeat genuine engagement SHOULD accumulate — that is the
+// engine's intent, gated by MIN_EVENT_COUNT + the confidence ratio). The only
+// counter that must not double-fire on revisits is the assessments TOTAL, which
+// is guarded to fire once per distinct assessment per device.
+// ============================================================================
+
+const SW_SCORING_FEED_VERSION = '1.0.0';
+
+// ----- DEFAULT_FEED_CONFIG — mirrors config/scoring-feed-weights.json (keep in
+//       sync; parity asserted in tests/test_bw1c.mjs). STARTER points: judgment
+//       calls. The 60-day half-life + caps + gates live in sw-scoring.js. ------
+const DEFAULT_FEED_CONFIG = {
+    topic_points:   { assessment_page: 12, condition_hub: 10, blog_post: 6 },
+    service_points: { service_page: 10 },
+    modality_points:{ service_page: 8 },
+    condition_hub_topic_map: {
+        condition_hub_ocd:      'ocd',
+        condition_hub_trauma:   'trauma_ptsd',
+        condition_hub_insomnia: 'insomnia_sleep'
+    }
+};
+
+// localStorage guard key for the once-per-distinct assessments TOTAL.
+const LS_SEEN_ASSESSMENTS = 'sw_seen_assessments';
+
+// membership helpers — never feed a ledger a key outside its canonical vocab,
+// and never feed the 'unassigned'/empty sentinel.
+function inVocab(value, vocab) {
+    return typeof value === 'string' && value && value !== 'unassigned' && vocab.indexOf(value) !== -1;
+}
+
+// ----- PURE core: classification -> ledger-feed instructions ----------------
+// `sig` = the raw classification available at the call-site:
+//   { pageType, serviceAttrs, assessmentAttrs, blogAttrs }
+//   (serviceAttrs/assessmentAttrs/blogAttrs are the matched taxonomy rows, or {}).
+// Returns an array of instruction objects. PURE — no storage, deterministic,
+// directly unit-testable. `vocab`/`cfg` are injectable (default to the imported
+// canonical lists / DEFAULT_FEED_CONFIG) so the mapping can be tested in
+// isolation.
+function buildLedgerFeeds(sig, cfg, vocab) {
+    const c = cfg || DEFAULT_FEED_CONFIG;
+    const V = vocab || { TOPIC_CLUSTERS: TOPIC_CLUSTERS, SERVICE_INTERESTS: SERVICE_INTERESTS, MODALITIES: MODALITIES };
+    const s = (sig && sig.serviceAttrs)    || {};
+    const a = (sig && sig.assessmentAttrs) || {};
+    const b = (sig && sig.blogAttrs)       || {};
+    const out = [];
+
+    // -- TOPIC ledger ------------------------------------------------------
+    // Assessment page (screener engagement = strongest topic tell).
+    if (inVocab(a.assessment_category, V.TOPIC_CLUSTERS)) {
+        out.push({ op: 'updateScore', ledger: 'topic', key: a.assessment_category,
+                   points: c.topic_points.assessment_page, source: 'assessment_page' });
+    }
+    // Condition-hub service page (explicit, minimal crosswalk).
+    var hubTopic = c.condition_hub_topic_map[s.service_variant];
+    if (inVocab(hubTopic, V.TOPIC_CLUSTERS)) {
+        out.push({ op: 'updateScore', ledger: 'topic', key: hubTopic,
+                   points: c.topic_points.condition_hub, source: 'condition_hub' });
+    }
+    // Blog post.
+    if (inVocab(b.post_topic_cluster, V.TOPIC_CLUSTERS)) {
+        out.push({ op: 'updateScore', ledger: 'topic', key: b.post_topic_cluster,
+                   points: c.topic_points.blog_post, source: 'blog_post' });
+    }
+
+    // -- SERVICE ledger (service pages, via rolls_up_to) -------------------
+    if (inVocab(s.rolls_up_to, V.SERVICE_INTERESTS)) {
+        out.push({ op: 'updateScore', ledger: 'service', key: s.rolls_up_to,
+                   points: c.service_points.service_page, source: 'service_page' });
+    }
+
+    // -- MODALITY ledger (service pages, via service_modality) -------------
+    if (inVocab(s.service_modality, V.MODALITIES)) {
+        out.push({ op: 'updateScore', ledger: 'modality', key: s.service_modality,
+                   points: c.modality_points.service_page, source: 'service_page' });
+    }
+
+    // -- DISTINCT counts (naturally idempotent via addDistinct dedup) ------
+    if (s.service_name) {
+        out.push({ op: 'addDistinct', countKey: 'services_count', value: s.service_name });
+    }
+    if (typeof s.service_modality === 'string' && s.service_modality && s.service_modality !== 'unassigned') {
+        out.push({ op: 'addDistinct', countKey: 'modalities_count', value: s.service_modality });
+    }
+    if (b.post_slug) {
+        out.push({ op: 'addDistinct', countKey: 'blog_posts_count', value: b.post_slug });
+    }
+
+    // -- ASSESSMENTS total (incrementCount, guarded once-per-distinct) -----
+    // The engine treats assessments_count as a running total via incrementCount.
+    // A bare page view of /y-bocs would inflate it on every revisit, so we only
+    // increment the first time each distinct assessment is seen on this device.
+    if (a.assessment_name) {
+        out.push({ op: 'incrementCountOnce', countKey: 'assessments_count',
+                   guardKey: LS_SEEN_ASSESSMENTS, value: a.assessment_name });
+    }
+
+    return out;
+}
+
+// ----- once-per-distinct guard (uses the REAL readJSON/writeJSON) ----------
+// Returns true the first time `value` is seen under `guardKey`, false after.
+// Injectable storage for tests.
+function markSeenOnce(guardKey, value, storage) {
+    var rj = (storage && storage.readJSON) || readJSON;
+    var wj = (storage && storage.writeJSON) || writeJSON;
+    var seen = rj('local', guardKey, []) || [];
+    if (!Array.isArray(seen)) seen = [];
+    if (seen.indexOf(value) !== -1) return false;
+    seen.push(value);
+    wj('local', guardKey, seen);
+    return true;
+}
+
+// ----- APPLY: dispatch instructions to the REAL primitives -----------------
+// Call this ONCE per page bootstrap, at the page-classification point, BEFORE
+// getAllUserProperties()/getAllCounts() are read (so the current page is
+// reflected in this page's envelope). `prims`/`storage` are injectable for
+// tests; in production they default to the real imported primitives.
+function applyLedgerFeeds(sig, cfg, prims, storage) {
+    var P = prims || { updateScore: updateScore, incrementCount: incrementCount, addDistinct: addDistinct };
+    var feeds = buildLedgerFeeds(sig, cfg);
+    var applied = 0;
+    for (var i = 0; i < feeds.length; i++) {
+        var f = feeds[i];
+        try {
+            if (f.op === 'updateScore') {
+                P.updateScore(f.ledger, f.key, f.points); applied++;
+            } else if (f.op === 'addDistinct') {
+                P.addDistinct(f.countKey, f.value); applied++;
+            } else if (f.op === 'incrementCountOnce') {
+                if (markSeenOnce(f.guardKey, f.value, storage)) { P.incrementCount(f.countKey); applied++; }
+            }
+        } catch (e) {
+            // Tracking must never crash the page (mirrors masterPage's try/catch).
+            // eslint-disable-next-line no-console
+            if (typeof console !== 'undefined') console.warn('[sw] ledger feed failed:', f && f.op, e);
+        }
+    }
+    return applied;
+}
+
+    // ====== sw-lead-fields ======
+// ============================================================================
+// sw-lead-fields.js  —  WS-A / A3  Per-form DOM field-selector map  (BW1-A)
+// ============================================================================
+// STATUS: Build Wave 1 — OFFLINE build + dry-run only. No live deploy.
+//
+// ROLE
+// ----
+// At submit-click, read the name / email / phone / message VALUES the visitor
+// just typed out of the Wix Forms DOM, per form. Wix Forms is a React widget:
+// the submit button is type="button" (no submit event), fields render as
+// <input>/<textarea>/<select> inside the `#form-{UUID}` container, and the DOM
+// is re-hydrated/re-hashed across renders. So selectors must be RESILIENT:
+// type-based primary resolution + label/aria/placeholder/name heuristics +
+// per-form overrides + a graceful "field not found" fallback.
+//
+// SOURCE OF TRUTH: the 18 registered forms in the live bundle's FORM_NAME_BY_ID
+// (verified against sw-bootstrap-bundle.js, commit 223c5136, 2026-06-24). The
+// W0-2 spike enumerated ~24 Wix Forms submission collections; the 18 below are
+// the ones the bundle instruments (registered-UUIDs-only, per resolveFormName).
+// Unregistered/auxiliary forms fall through to the heuristic resolver.
+//
+// LIVE-CONFIRM (build task A1): the exact per-field selectors here are derived
+// from the known form *structure* (field counts + labels from FORM_NAME_BY_ID
+// comments + the W0-2 form taxonomy), NOT from a live DOM dump of every form.
+// A1 must dump each form's DOM (`document.querySelector('#form-{UUID}')`) and
+// tighten any `override` whose heuristic guess is ambiguous. The heuristic
+// resolver is designed to be correct without overrides for the standard
+// Name/Email/Phone/Message shape; overrides exist for the non-standard forms.
+//
+// PII rule: this module returns typed VALUES (the PII). They go ONLY into the
+// transient sw_lead_pending sessionStorage (A4) and then the Store-B POST.
+// Never logged; never pushed to GA4.
+// ============================================================================
+
+(function (root, factory) {
+    if (typeof module === 'object' && module.exports) module.exports = factory();
+    else root.SWLeadFields = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+    'use strict';
+
+    // ---- Per-form expectations + override hints ---------------------------
+    // `expects` tells the fallback which fields SHOULD exist (so a missing
+    // expected field is a real warning, while a missing un-expected field is
+    // silent — e.g. a newsletter form has no message/phone).
+    // `override` (optional) pins a CSS selector for a field when the heuristic
+    // is ambiguous; null/absent = use the heuristic. Fill from A1 live dumps.
+    var FORM_FIELD_MAP = {
+        // ---- main inquiry forms ----
+        // "Schedule a free consultation" — Name / Email / Phone / Message
+        contact_main:        { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+        // 9-field detailed assessment intake — "Get in Touch with Dr. Kelly"
+        // (has name/email/phone + a longer "tell us" textarea + extra fields).
+        assessment_inquiry:  { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+        // coaching inquiry — "Get in Touch with Shane for Coaching"
+        coaching_inquiry:    { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+
+        // ---- service-specific 4-field forms (Name/Email/Phone/"How can we help?") ----
+        ocd_inquiry:         { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+        trauma_inquiry:      { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+        research_inquiry:    { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+
+        // ---- "Do you have questions?" Q&A forms ----
+        quick_questions:     { expects: { name: true,  email: true,  phone: false, message: true  }, override: {} },
+        groups_questions:    { expects: { name: true,  email: true,  phone: false, message: true  }, override: {} },
+
+        // ---- group enrollment ("Select a group below to get started") ----
+        groups_signup:       { expects: { name: true,  email: true,  phone: false, message: false }, override: {} },
+
+        // ---- newsletter — single-field email subscribe ----
+        research_subscribe:  { expects: { name: false, email: true,  phone: false, message: false }, override: {} },
+
+        // ---- careers application (name/email/phone + cover note; resume upload not captured) ----
+        careers:             { expects: { name: true,  email: true,  phone: true,  message: true  }, override: {} },
+
+        // ---- clinician profile forms (one per clinician page; Name/Email/Phone/Message) ----
+        clinician_kiesa_kelly:          { expects: { name: true, email: true, phone: true, message: true }, override: {} },
+        clinician_laura_travers_heinig: { expects: { name: true, email: true, phone: true, message: true }, override: {} },
+        clinician_catherine_cavin:      { expects: { name: true, email: true, phone: true, message: true }, override: {} },
+        clinician_kathryn_wood:         { expects: { name: true, email: true, phone: true, message: true }, override: {} },
+        clinician_ryan_robertson:       { expects: { name: true, email: true, phone: true, message: true }, override: {} },
+
+        // ---- unknown / unregistered forms — capture whatever resolves ----
+        unknown_form:        { expects: { name: false, email: true,  phone: false, message: false }, override: {} }
+    };
+
+    // ---- label/aria/placeholder/name matchers -----------------------------
+    var RE_EMAIL   = /e-?mail/i;
+    var RE_PHONE   = /phone|tel(ephone)?|mobile|cell/i;
+    var RE_MESSAGE = /message|how can we help|tell us|comment|question|details|note|inquir/i;
+    var RE_NAME    = /\bname\b|full name|your name/i;
+    var RE_FIRST   = /first ?name|given/i;
+    var RE_LAST    = /last ?name|surname|family/i;
+
+    // Pull the best label-ish text for an input: aria-label, the associated
+    // <label for=id>, an ancestor label, placeholder, name, id — in that order.
+    function _labelText(el, container) {
+        if (!el) return '';
+        var bits = [];
+        try { bits.push(el.getAttribute && el.getAttribute('aria-label')); } catch (x) {}
+        try {
+            var id = el.id;
+            if (id && container && container.querySelector) {
+                var lbl = container.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+                if (lbl) bits.push(lbl.textContent);
+            }
+        } catch (x) {}
+        try {
+            var anc = el.closest && el.closest('label');
+            if (anc) bits.push(anc.textContent);
+        } catch (x) {}
+        try { bits.push(el.placeholder); } catch (x) {}
+        try { bits.push(el.getAttribute && el.getAttribute('name')); } catch (x) {}
+        try { bits.push(el.id); } catch (x) {}
+        return bits.filter(Boolean).join(' ').trim();
+    }
+
+    function _val(el) {
+        if (!el) return null;
+        try {
+            var v = el.value;
+            if (v == null) return null;
+            v = String(v).trim();
+            return v.length ? v : null;
+        } catch (x) { return null; }
+    }
+
+    function _all(container, sel) {
+        try { return Array.prototype.slice.call(container.querySelectorAll(sel)); }
+        catch (x) { return []; }
+    }
+
+    // ---- the resolver -----------------------------------------------------
+    // resolveLeadFields(container, formName) ->
+    //   { name, email, phone, message, _warnings:[...], _resolved:{...} }
+    // Pure read of DOM values. Never throws (storage/DOM access guarded).
+    function resolveLeadFields(container, formName) {
+        var out = { name: null, email: null, phone: null, message: null, _warnings: [], _resolved: {} };
+        if (!container || !container.querySelector) {
+            out._warnings.push('no_container');
+            return out;
+        }
+        var cfg = FORM_FIELD_MAP[formName] || FORM_FIELD_MAP.unknown_form;
+        var ov = (cfg && cfg.override) || {};
+
+        var inputs = _all(container, 'input, textarea, select').filter(function (el) {
+            // skip hidden / submit / button / file inputs — never PII text
+            var t = (el.type || '').toLowerCase();
+            if (t === 'hidden' || t === 'submit' || t === 'button' || t === 'reset' || t === 'file' || t === 'checkbox' || t === 'radio') return false;
+            try { if (el.offsetParent === null && el.type !== 'textarea') { /* possibly hidden — still allow, Wix nests */ } } catch (x) {}
+            return true;
+        });
+
+        // ---- EMAIL: type=email primary; override; label heuristic ----
+        var emailEl = _pick(container, ov.email)
+                   || inputs.filter(function (el) { return (el.type || '').toLowerCase() === 'email'; })[0]
+                   || inputs.filter(function (el) { return RE_EMAIL.test(_labelText(el, container)); })[0]
+                   || null;
+
+        // ---- PHONE: type=tel primary; override; label heuristic ----
+        var phoneEl = _pick(container, ov.phone)
+                   || inputs.filter(function (el) { return (el.type || '').toLowerCase() === 'tel'; })[0]
+                   || inputs.filter(function (el) { return RE_PHONE.test(_labelText(el, container)); })[0]
+                   || null;
+
+        // ---- MESSAGE: <textarea> primary; override; label heuristic ----
+        var msgEl = _pick(container, ov.message)
+                 || inputs.filter(function (el) { return (el.tagName || '').toLowerCase() === 'textarea'; })[0]
+                 || inputs.filter(function (el) { return RE_MESSAGE.test(_labelText(el, container)); })[0]
+                 || null;
+
+        // ---- NAME: label heuristic over remaining text inputs ----
+        // Handle split first/last name -> join. Exclude already-claimed els.
+        var claimed = [emailEl, phoneEl, msgEl].filter(Boolean);
+        function _free(el) { return el && claimed.indexOf(el) === -1; }
+        var textish = inputs.filter(function (el) {
+            var tag = (el.tagName || '').toLowerCase();
+            var t = (el.type || '').toLowerCase();
+            return _free(el) && (tag === 'input') && (t === 'text' || t === '' || t === 'search');
+        });
+
+        var nameEl = _pick(container, ov.name);
+        var firstEl = null, lastEl = null, fullEl = null;
+        if (!nameEl) {
+            for (var i = 0; i < textish.length; i++) {
+                var lt = _labelText(textish[i], container);
+                if (!firstEl && RE_FIRST.test(lt)) { firstEl = textish[i]; continue; }
+                if (!lastEl  && RE_LAST.test(lt))  { lastEl  = textish[i]; continue; }
+                if (!fullEl  && RE_NAME.test(lt))  { fullEl  = textish[i]; }
+            }
+            if (firstEl || lastEl) {
+                var fn = _val(firstEl), ln = _val(lastEl);
+                out.name = [fn, ln].filter(Boolean).join(' ') || null;
+                out._resolved.name = { mode: 'split', first: !!firstEl, last: !!lastEl };
+            } else if (fullEl) {
+                nameEl = fullEl;
+            } else if (textish.length) {
+                // last-resort: the first free text input is most often the name
+                nameEl = textish[0];
+                out._resolved.name = { mode: 'firstFreeTextFallback' };
+            }
+        }
+        if (nameEl && out.name == null) { out.name = _val(nameEl); out._resolved.name = out._resolved.name || { mode: 'single' }; }
+
+        out.email   = _val(emailEl);
+        out.phone   = _val(phoneEl);
+        out.message = _val(msgEl);
+        out._resolved.email   = emailEl ? _resolvedHow(emailEl, ov.email) : null;
+        out._resolved.phone   = phoneEl ? _resolvedHow(phoneEl, ov.phone) : null;
+        out._resolved.message = msgEl   ? _resolvedHow(msgEl, ov.message) : null;
+
+        // ---- field-not-found warnings (only for EXPECTED fields) ----
+        // Graceful fallback (resolution of SPEC §8 Q3): NEVER block the POST.
+        // A missing field => null value + a warning. A4 still POSTs the
+        // behavioral profile keyed by sw_uid; profileCompleteness.identity
+        // reflects the gap; reconciliation (A7) is best-effort on email.
+        var exp = cfg.expects || {};
+        if (exp.name    && out.name    == null) out._warnings.push('name_not_found');
+        if (exp.email   && out.email   == null) out._warnings.push('email_not_found');
+        if (exp.phone   && out.phone   == null) out._warnings.push('phone_not_found');
+        if (exp.message && out.message == null) out._warnings.push('message_not_found');
+
+        return out;
+    }
+
+    function _pick(container, sel) {
+        if (!sel) return null;
+        try { return container.querySelector(sel) || null; } catch (x) { return null; }
+    }
+    function _resolvedHow(el, override) {
+        if (override) return { mode: 'override' };
+        var tag = (el.tagName || '').toLowerCase();
+        var t = (el.type || '').toLowerCase();
+        if (t === 'email' || t === 'tel' || tag === 'textarea') return { mode: 'type' };
+        return { mode: 'label' };
+    }
+
+    return {
+        resolveLeadFields: resolveLeadFields,
+        FORM_FIELD_MAP: FORM_FIELD_MAP,
+        _internal: { labelText: _labelText, RE_EMAIL: RE_EMAIL, RE_PHONE: RE_PHONE, RE_MESSAGE: RE_MESSAGE, RE_NAME: RE_NAME }
+    };
+});
+
+    // ====== sw-lead-assembler ======
+// ============================================================================
+// sw-lead-assembler.js  —  WS-A / A5  Profile-assembler  (BW1-A)
+// ============================================================================
+// STATUS: Build Wave 1 — OFFLINE build + dry-run only. No live deploy, no live
+//         data write, no bundle re-pin. Integrates at Gate B1 (HQ).
+//
+// ROLE
+// ----
+// Pure-ish function that reads the pseudonymous profile already sitting in
+// local/sessionStorage (assembled by the live sw-* bundle) + the transient
+// PII captured at submit-click, and emits the canonical Lead Profile object in
+// the FROZEN v1.0 storage shape (lead-profile-schema.md §11): camelCase Wix
+// storage names at the top level + a single `profileJson` blob for the nested
+// long-tail. Ungated fields are emitted as `null` (never omitted) so consumers
+// can tell "not yet known" from "absent" (§0 null discipline).
+//
+// This object is exactly what sw-forms.js (A4) POSTs to the ingest endpoint
+// (A2) on /confirmation. The endpoint maps `submissionId` -> dataItem.id and
+// writes `data` into the LeadProfiles collection (Store B).
+//
+// CONTRACT BOUNDARIES (consumed; owned by other streams — integrate at gate):
+//   - getOrCreateSwUid()        OWNED BY BW1-D (sw-uid.js). Injected via deps.
+//   - computePropensity(profile) OWNED BY BW1-C (sw-propensity.js). Injected.
+//   - buildFeatureSnapshot(p)   OWNED BY BW1-C (feature_snapshot, WS-G G3).
+//                               Injected. Immutable at-submit vector; the
+//                               training-row closer. MUST ride this bridge.
+//   Until integration, the dry-run harness injects deterministic stubs.
+//
+// GA4 / two-store rule (§10.1): this module assembles the FULL Store-B record
+// (PII + health inference included). It NEVER pushes to dataLayer/GA4. The
+// PII-free GA4 `generate_lead` push stays entirely in sw-forms.js and is
+// untouched here. Keeping assembly and the GA4 push in separate code paths is
+// the structural half of the two-store split.
+//
+// PII rule: name/email/phone/message are carried verbatim into the Store-B
+// object ONLY. They are never logged, never derived into GA4-eligible fields,
+// never placed in a ga4_allowed:true slot.
+// ============================================================================
+
+(function (root, factory) {
+    // UMD: usable as a browser global (window.SWLeadAssembler) AND require()'d
+    // in Node for the offline dry-run harness.
+    if (typeof module === 'object' && module.exports) {
+        module.exports = factory();
+    } else {
+        root.SWLeadAssembler = factory();
+    }
+})(typeof self !== 'undefined' ? self : this, function () {
+    'use strict';
+
+    var SCHEMA_VERSION = '1.0';
+    var CAPTURE_MECHANISM = 'ingest_endpoint';   // §11.3 captureMechanism
+    var INGEST_SOURCE = 'client_direct';         // §10.4 ingestSource — browser-originated capture-and-POST
+
+    // ---- storage adapters (testable) --------------------------------------
+    // env may inject {localStorage, sessionStorage, context, now, randomUUID}.
+    // Defaults bind to browser globals. Every access is guarded — storage can
+    // throw (private mode / quota / disabled) and must degrade, never throw.
+    function makeEnv(env) {
+        env = env || {};
+        var ls = env.localStorage   || (typeof localStorage   !== 'undefined' ? localStorage   : null);
+        var ss = env.sessionStorage || (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+        var ctx = env.context !== undefined ? env.context
+                 : (typeof window !== 'undefined' && window.__sw_context) ? window.__sw_context : {};
+        var now = env.now || function () { return Date.now(); };
+        var uuid = env.randomUUID || _defaultUuid;
+        return { ls: ls, ss: ss, ctx: ctx || {}, now: now, uuid: uuid };
+    }
+
+    function _getLocal(e, key) {
+        try { var v = e.ls && e.ls.getItem(key); return v == null ? null : v; } catch (x) { return null; }
+    }
+    function _getSession(e, key) {
+        try { var v = e.ss && e.ss.getItem(key); return v == null ? null : v; } catch (x) { return null; }
+    }
+    function _getJSONLocal(e, key, dflt) {
+        var raw = _getLocal(e, key);
+        if (raw == null) return dflt;
+        try { var p = JSON.parse(raw); return p == null ? dflt : p; } catch (x) { return dflt; }
+    }
+    function _num(v, dflt) {
+        if (v == null || v === '') return dflt;
+        var n = parseInt(v, 10);
+        return isNaN(n) ? dflt : n;
+    }
+    function _str(v) { return v == null ? null : String(v); }
+
+    // crypto.randomUUID primary; sw-session-style Math.random fallback.
+    function _defaultUuid() {
+        try {
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+        } catch (x) {}
+        // RFC-4122-shaped v4 fallback (NOT cryptographically strong; collision-
+        // safe enough for a submission id). Mirrors sw-session.js entropy.
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = (Math.random() * 16) | 0;
+            var v = c === 'x' ? r : ((r & 0x3) | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    // ---- localStorage / sessionStorage key map (verified against source) ---
+    // sw-first-touch.js, sw-session.js, sw-scoring.js, sw-forms.js (2026-06-24)
+    var K = {
+        // first-touch (sw-first-touch.js LS_KEYS)
+        ftTrafficSource:  'sw_ft_traffic_source',
+        ftUtmSource:      'sw_ft_utm_source',
+        ftUtmMedium:      'sw_ft_utm_medium',
+        ftUtmCampaign:    'sw_ft_utm_campaign',
+        ftLandingPage:    'sw_ft_landing_page',
+        ftReferrerDomain: 'sw_ft_referrer_domain',
+        ftDeviceClass:    'sw_ft_device_class',
+        // session (sw-session.js)
+        ssSessionNumber:  'sw_session_number',
+        ssEntryMethod:    'sw_session_entry_method',
+        ssEntryPage:      'sw_session_entry_page',
+        ssIsNewUser:      'sw_is_new_user',
+        // distinct counters (sw-scoring.js LS_COUNT_KEYS) — gated on C2-parent (W0-1)
+        cntAssessments:   'sw_count_assessments',
+        cntModalities:    'sw_count_modalities_distinct',
+        cntServices:      'sw_count_services_viewed_distinct',
+        cntBlogPosts:     'sw_count_blog_posts_viewed_distinct',
+        // info-page attribution (sw-forms.js maybeFireGenerateLead, 30-min window)
+        ssLastInfoTopic:  'sw_last_info_topic'
+    };
+
+    function _distinctCount(e, key) {
+        // distinct-value sets store a JSON array; total counters store a number.
+        var raw = _getLocal(e, key);
+        if (raw == null) return 0;
+        try { var p = JSON.parse(raw); if (Array.isArray(p)) return p.length; } catch (x) {}
+        return _num(raw, 0);
+    }
+
+    function _readInfoTopic(e) {
+        var raw = _getSession(e, K.ssLastInfoTopic);
+        if (!raw) return { topic: null, service: null };
+        try {
+            var o = JSON.parse(raw);
+            if (o && o.topic && (e.now() - (o.ts || 0)) <= 1800000) {  // 30-min window
+                return { topic: _str(o.topic), service: _str(o.service || '') };
+            }
+        } catch (x) {}
+        return { topic: null, service: null };
+    }
+
+    // ---- the assembler ----------------------------------------------------
+    // captured = { pii: {name,email,phone,message}, captureWarnings: [],
+    //              pending: <sw_form_pending_submit object>, swUid?, submissionId? }
+    // deps     = { getOrCreateSwUid, computePropensity, buildFeatureSnapshot }
+    // env      = { localStorage, sessionStorage, context, now, randomUUID }
+    function assembleLeadProfile(captured, deps, env) {
+        captured = captured || {};
+        deps = deps || {};
+        var e = makeEnv(env);
+
+        var pii      = captured.pii || {};
+        var pending  = captured.pending || {};
+        var svc      = pending.service_context || {};
+        var ctx      = e.ctx || {};
+        var nowMs    = e.now();
+        var nowIso   = new Date(nowMs).toISOString();
+
+        // submissionId: idempotent-insert key (§11.2). Generated once here; A4
+        // reuses it as dataItem.id. Prefer a caller-supplied value (lets A4
+        // pin it before retrying) else mint.
+        var submissionId = captured.submissionId || ('sub_' + e.uuid());
+
+        // sw_uid: BW1-D owns generation; consumed here. Prefer the value A4
+        // already stashed at submit-click; else call the injected provider;
+        // else null (A2 G5 will reject a profile with no swUid).
+        var swUid = captured.swUid
+                 || (typeof deps.getOrCreateSwUid === 'function' ? deps.getOrCreateSwUid() : null)
+                 || null;
+
+        // capture-latency telemetry: submit-click -> assembly (client-measured;
+        // A2 may refine server-side). Bounded; never negative.
+        var clickTs = _num(pending.click_ts_ms, 0);
+        var captureLatencyMs = clickTs > 0 ? Math.max(0, nowMs - clickTs) : null;
+
+        // attribution quality — mirrors sw-forms.js maybeFireGenerateLead.
+        var SUBMIT_WINDOW_MS = 10000;
+        var attributionSourceQuality;
+        if (!clickTs) attributionSourceQuality = 'confirmation_page_fallback';
+        else attributionSourceQuality = (nowMs - clickTs) > SUBMIT_WINDOW_MS
+            ? 'submit_click_stale' : 'submit_click_attribution';
+
+        var info = _readInfoTopic(e);
+
+        // ---- derived inputs the scorer reads that aren't yet in storage -----
+        // attributionSourceQuality is computed above; sessionPageCount /
+        // timeToConvertMs are Phase-2 (WS-B) and null today. Bundled so the
+        // camelCase scorer-input carries the SAME §11-shaped values the
+        // assembled profile will carry (FINDING 1: scorer reads camelCase).
+        var scorerDerived = {
+            attributionSourceQuality: attributionSourceQuality,
+            sessionPageCount: null,   // Phase 2 (WS-B)
+            timeToConvertMs: null     // Phase 2 (WS-B)
+        };
+
+        // ---- inference verdict (read from the live page-context envelope) ---
+        // window.__sw_context already carries getAllUserProperties() output.
+        // Until C2-parent wires the ledgers (W0-1: DORMANT), these read
+        // 'unassigned' / 0 for everyone — carried faithfully, never invented.
+        var primaryTopicCluster    = ctx.primary_topic_cluster    != null ? _str(ctx.primary_topic_cluster)    : 'unassigned';
+        var topicConfidence        = typeof ctx.topic_confidence    === 'number' ? ctx.topic_confidence    : 0;
+        var primaryServiceInterest = ctx.primary_service_interest != null ? _str(ctx.primary_service_interest) : 'unassigned';
+        var serviceConfidence      = typeof ctx.service_confidence  === 'number' ? ctx.service_confidence  : 0;
+        var primaryModality        = ctx.primary_modality        != null ? _str(ctx.primary_modality)        : 'unassigned';
+        var modalityConfidence     = typeof ctx.modality_confidence === 'number' ? ctx.modality_confidence : 0;
+
+        // ---- propensity (BW1-C). Consume the frozen object shape (§10.3):
+        //   { score, band, top_signals:[{signal,points,label}], method, version }
+        var prop = null;
+        if (typeof deps.computePropensity === 'function') {
+            try { prop = deps.computePropensity(_propensityInput(captured, ctx, e, scorerDerived)); } catch (x) { prop = null; }
+        }
+        var propensityScore   = prop && typeof prop.score === 'number' ? prop.score : null;
+        var propensityBand    = prop && prop.band   ? _str(prop.band)   : null;
+        var propensityMethod  = prop && prop.method ? _str(prop.method) : null;
+        var propensityVersion = prop && prop.version ? _str(prop.version) : null;
+        var propensityTopSignals = prop && Array.isArray(prop.top_signals) ? prop.top_signals : null;
+
+        // ---- feature_snapshot (BW1-C / WS-G G3): immutable at-submit vector.
+        // Flat OBJECT (§11 rule 11.1.4). Never mutated after insert.
+        var featureSnapshot = null;
+        if (typeof deps.buildFeatureSnapshot === 'function') {
+            try { featureSnapshot = deps.buildFeatureSnapshot(_propensityInput(captured, ctx, e, scorerDerived)); } catch (x) { featureSnapshot = null; }
+        }
+
+        // ---- profileCompleteness: per-layer coverage flags for WS-E ---------
+        var profileCompleteness = {
+            acquisition: _getLocal(e, K.ftTrafficSource) != null,
+            inference:   primaryTopicCluster !== 'unassigned'
+                         || primaryServiceInterest !== 'unassigned'
+                         || primaryModality !== 'unassigned',
+            propensity:  propensityScore != null,
+            breadcrumb:  false,   // Phase 2 (WS-B)
+            telemetry:   false,   // Phase 3 (WS-B)
+            identity:    !!(pii.email || pii.name)
+        };
+
+        // ---- consent_flags (WS-F owns final shape). Minimal placeholder so
+        // the field is never absent; WS-F overrides at integration. ----------
+        var consentFlags = {
+            trackingDisclosed: true,      // enhanced-disclosure posture (WS-F §2.2)
+            disclosedAt: nowIso,
+            policyVersion: null           // WS-F sets when PP version is pinned (P0-3)
+        };
+
+        // ---- derive time-of-day / day-of-week from capturedAt --------------
+        var d = new Date(nowMs);
+        var blobTimeOfDay = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+        var blobDayOfWeek = d.getDay();   // 0=Sun
+
+        // ===== ASSEMBLE — FROZEN v1.0 §11 STORAGE SHAPE =====================
+        var profile = {
+            // ---- envelope (§11.3) ----
+            submissionId: submissionId,
+            swUid: swUid,
+            schemaVersion: SCHEMA_VERSION,
+            capturedAt: nowIso,
+            // submittedAt: SET SERVER-SIDE by A2 at insert (§11.3 source=server).
+            captureMechanism: CAPTURE_MECHANISM,
+            captureLatencyMs: captureLatencyMs,
+            ingestSource: INGEST_SOURCE,
+            attributionSourceQuality: attributionSourceQuality,
+            retentionClass: null,   // value WS-F
+            ttlExpiresAt: null,     // sweep sets
+            piiRedactedAt: null,    // sweep sets
+            profileCompleteness: profileCompleteness,
+
+            // ---- identity & lead (PII — ga4_allowed:false) ----
+            leadName:    _str(pii.name)    || null,
+            leadEmail:   _normEmail(pii.email),
+            leadPhone:   _str(pii.phone)   || null,
+            leadMessage: _str(pii.message) || null,
+            consentFlags: consentFlags,
+            wixSubmissionId: null,   // A7 resolves async
+            wixContactId: null,      // A7 resolves async
+
+            // ---- submit context (have-it; ga4_allowed:false) ----
+            formName: _str(pending.form_name) || null,
+            formType: _str(pending.form_type) || null,
+            leadValueEstimate: _num(pending.lead_value_estimate, null),
+            pageAtSubmit: _str(svc.page_path_at_form) || null,
+            serviceAtSubmit: _str(svc.service_name) || null,
+            clinicianAtSubmit: _str(svc.clinician_name) || null,
+            leadSourceInfoTopic: info.topic,
+            leadSourceInfoService: info.service,
+
+            // ---- acquisition (have-it; ga4_allowed:true) ----
+            firstTrafficSource:  _str(_getLocal(e, K.ftTrafficSource)),
+            firstLandingPage:    _str(_getLocal(e, K.ftLandingPage)),
+            firstReferrerDomain: _str(_getLocal(e, K.ftReferrerDomain)),
+            firstDeviceClass:    _str(_getLocal(e, K.ftDeviceClass)),
+            lastTouchSource: null,   // Phase 2 (WS-B)
+
+            // ---- journey rollups (ga4_allowed:true) ----
+            sessionNumber: _num(_getLocal(e, K.ssSessionNumber)
+                                || _getSession(e, K.ssSessionNumber), null),
+            entryMethod: _str(_getSession(e, K.ssEntryMethod)) ,
+            entryPage:   _str(_getSession(e, K.ssEntryPage)),
+            isNewUser:   (_getSession(e, K.ssIsNewUser) === 'true'),
+            distinctServicesCount:   _distinctCount(e, K.cntServices),
+            distinctBlogsCount:      _distinctCount(e, K.cntBlogPosts),
+            distinctModalitiesCount: _distinctCount(e, K.cntModalities),
+            assessmentsCount:        _distinctCount(e, K.cntAssessments),
+            journeyPageCountTotal: null,  // Phase 2 (WS-B)
+            journeySessionCount: null,    // Phase 2 (WS-B)
+            journeyDistinctPaths: null,   // Phase 2 (WS-B)
+            deepestPageType: null,        // Phase 2 (WS-B)
+            timeToConvertMs: null,        // Phase 2 (WS-B)
+
+            // ---- inference verdict (WS-C; ga4_allowed:false) ----
+            primaryTopicCluster: primaryTopicCluster,
+            topicConfidence: topicConfidence,
+            primaryServiceInterest: primaryServiceInterest,
+            serviceConfidence: serviceConfidence,
+            primaryModality: primaryModality,
+            modalityConfidence: modalityConfidence,
+            audienceType: null,            // Phase 2 (WS-C)
+            propensityScore: propensityScore,
+            propensityBand: propensityBand,
+            propensityMethod: propensityMethod,
+            propensityVersion: propensityVersion,
+            bestFitClinician: null,        // Phase 2 (WS-C)
+            bestFitConfidence: null,       // Phase 2 (WS-C)
+            clinicianInterestTop: null,    // Phase 2 (WS-C)
+            clinicianInterestConfidence: null, // Phase 2 (WS-C)
+            urgencySignal: null,           // Phase 4 (WS-C)
+            likelyObjection: null,         // Phase 4 (WS-C)
+
+            // ---- at-submit immutable feature vector (WS-G G3) ----
+            featureSnapshot: featureSnapshot,
+
+            // ---- phase-4 enrichment ----
+            probableQueriesComputedAt: null,
+
+            // ===== profileJson blob (§11.4) =====
+            profileJson: {
+                utm: {
+                    source:   _str(_getLocal(e, K.ftUtmSource)),
+                    medium:   _str(_getLocal(e, K.ftUtmMedium)),
+                    campaign: _str(_getLocal(e, K.ftUtmCampaign)),
+                    content:  null,   // WS-B buildout
+                    term:     null    // WS-B buildout
+                },
+                timeOfDay: blobTimeOfDay,
+                dayOfWeek: blobDayOfWeek,
+                approxGeo: null,                 // Phase 3 (WS-F: coarse only)
+                likelyOrganicQuery: null,        // Phase 4 (WS-D)
+                journeyBreadcrumb: null,         // Phase 2 (WS-B)
+                timeGapsBetweenPages: null,      // Phase 2 (WS-B)
+                revisits: null,                  // Phase 2 (WS-C)
+                crossSession: null,              // Phase 2 (WS-B)
+                funnelPosition: null,            // Phase 2 (WS-B)
+                perPageTelemetry: null,          // Phase 3 (WS-B)
+                clinicianInterestRanked: null,   // Phase 2 (WS-C)
+                bestFitRationale: null,          // Phase 2 (WS-C)
+                bestFitAlternates: null,         // Phase 2 (WS-C)
+                propensityTopSignals: propensityTopSignals,
+                objectionConfidence: null,       // Phase 4 (WS-C)
+                urgencyEvidence: null,           // Phase 4 (WS-C)
+                probableQueries: null            // Phase 4 (WS-D)
+            }
+        };
+
+        // carry capture warnings (A3 field-not-found fallback) out-of-band for
+        // A4 -> A2 diagnostics. NOT a Store-B field; A2 strips it (G5 allowlist).
+        if (captured.captureWarnings && captured.captureWarnings.length) {
+            profile._captureWarnings = captured.captureWarnings.slice();
+        }
+
+        return profile;
+    }
+
+    // Build the non-PII feature input handed to BW1-C's scorer/snapshot.
+    //
+    // CONTRACT (FINDING 1 fix, 2026-06-25): computePropensity() and
+    // buildFeatureSnapshot() (BW1-C) read the FROZEN §11 camelCase storage
+    // names DIRECTLY off this object (FEATURE-CONTRACT.md F1-F8 source fields:
+    // primaryTopicCluster/topicConfidence, primaryServiceInterest/
+    // serviceConfidence, primaryModality/modalityConfidence,
+    // distinctServicesCount/distinctBlogsCount/distinctModalitiesCount/
+    // assessmentsCount, sessionNumber/sessionPageCount, formType/pageAtSubmit/
+    // serviceAtSubmit/clinicianAtSubmit/leadSourceInfoTopic, timeToConvertMs,
+    // attributionSourceQuality). Emitting snake_case here made the scorer read
+    // 0/unassigned for every feature. The keys below mirror the §11 names the
+    // assembled profile uses, sourced from the same storage as the profile.
+    //
+    // PII rule: the scorer must NOT see raw PII text. name/email are excluded
+    // entirely; message contributes LENGTH + a presence flag ONLY, never the
+    // text (sw-propensity.js PII rule / WRITE-CONTRACT §5). The v1 F-set
+    // (FEATURE-CONTRACT.md) excludes message-derived data, so these are carried
+    // for forward-compat only and never feed a scored feature today.
+    function _propensityInput(captured, ctx, e, derived) {
+        derived = derived || {};
+        var pii = captured.pii || {};
+        var pending = captured.pending || {};
+        var svc = pending.service_context || {};
+        var msg = pii.message == null ? '' : String(pii.message);
+        var sessNum = _num(_getLocal(e, K.ssSessionNumber)
+                           || _getSession(e, K.ssSessionNumber), null);
+        var info = _readInfoTopic(e);
+        return {
+            // ---- inference verdict (F1/F2/F3) — §11 camelCase names ----
+            primaryTopicCluster:    ctx.primary_topic_cluster    != null ? _str(ctx.primary_topic_cluster)    : 'unassigned',
+            topicConfidence:        typeof ctx.topic_confidence    === 'number' ? ctx.topic_confidence    : 0,
+            primaryServiceInterest: ctx.primary_service_interest != null ? _str(ctx.primary_service_interest) : 'unassigned',
+            serviceConfidence:      typeof ctx.service_confidence  === 'number' ? ctx.service_confidence  : 0,
+            primaryModality:        ctx.primary_modality        != null ? _str(ctx.primary_modality)        : 'unassigned',
+            modalityConfidence:     typeof ctx.modality_confidence === 'number' ? ctx.modality_confidence : 0,
+            // ---- engagement breadth (F4) — distinct counters ----
+            distinctServicesCount:   _distinctCount(e, K.cntServices),
+            distinctBlogsCount:      _distinctCount(e, K.cntBlogPosts),
+            distinctModalitiesCount: _distinctCount(e, K.cntModalities),
+            assessmentsCount:        _distinctCount(e, K.cntAssessments),
+            // ---- journey length (F5) ----
+            sessionNumber:   sessNum,
+            sessionPageCount: derived.sessionPageCount != null ? derived.sessionPageCount : null,  // Phase 2 (WS-B); null today
+            // ---- high-intent / submit context (F6/F8) — §11 camelCase ----
+            formType:           _str(pending.form_type) || null,
+            pageAtSubmit:       _str(svc.page_path_at_form) || null,
+            serviceAtSubmit:    _str(svc.service_name) || null,
+            clinicianAtSubmit:  _str(svc.clinician_name) || null,
+            leadSourceInfoTopic: info.topic,
+            attributionSourceQuality: derived.attributionSourceQuality || null,
+            // ---- urgency compression (F7) ----
+            timeToConvertMs: derived.timeToConvertMs != null ? derived.timeToConvertMs : null,  // Phase 2 (WS-B); null today
+            // ---- message SUBSTANCE — length + flag ONLY, never the text
+            //      (NOT a scored v1 feature; forward-compat carry) ----
+            messageLength:  msg.length,
+            messageHasText: msg.trim().length > 0
+        };
+    }
+
+    function _normEmail(v) {
+        if (v == null) return null;
+        var s = String(v).trim().toLowerCase();
+        if (!s) return null;
+        // cap length defensively; no validation here (A2 G5 owns rejection)
+        return s.length > 254 ? s.slice(0, 254) : s;
+    }
+
+    return {
+        assembleLeadProfile: assembleLeadProfile,
+        SCHEMA_VERSION: SCHEMA_VERSION,
+        _internal: { makeEnv: makeEnv, K: K, defaultUuid: _defaultUuid, normEmail: _normEmail }
+    };
+});
+
+    // ====== sw-forms-lci ======
+// ============================================================================
+// sw-forms-lci.js  —  WS-A / A4  Identity-bridge extension to sw-forms.js  (BW1-A)
+// ============================================================================
+// STATUS: Build Wave 1 — OFFLINE build + dry-run only. No live deploy, no live
+//         data write, no bundle re-pin. Integrates at Gate B1 (HQ).
+//
+// SINGLE-WRITER NOTE: this is a SEPARATE module, NOT an edit of the shared
+// dev-scaffold sw-forms.js. HQ wires the two one-line call-sites (below) into
+// the live sw-forms.js at integration. This keeps BW1-A's work isolated.
+//
+// WHAT THIS ADDS (the identity bridge, capture-and-POST PRIMARY path):
+//   1. captureLeadPiiOnSubmitClick(container, formName, deps)
+//        Called immediately AFTER the existing handleFormSubmitClick writes
+//        sw_form_pending_submit. Reads the typed name/email/message/phone from
+//        the form DOM (A3 resolver) + the write-once sw_uid (BW1-D), and
+//        stashes them in a TRANSIENT sessionStorage key `sw_lead_pending`.
+//        (The form DOM is gone after Wix's hard-nav to /confirmation, so the
+//        PII must be read at submit-click and carried forward. The transient
+//        PII-in-sessionStorage hop is same-origin, tab-scoped, and cleared
+//        immediately after the POST — a WS-F flag, not a blocker. SPEC §3.2.)
+//
+//   2. assembleAndPostLeadProfile(currentPath, deps, config)
+//        Called from maybeFireGenerateLead WHEN currentPath === '/confirmation'
+//        (proof of a SUCCESSFUL submit — we never write Store-B rows for leads
+//        that failed validation). Assembles the full v1.0 profile (A5) from
+//        sw_lead_pending + sw_form_pending_submit + storage, POSTs it to the
+//        first-party ingest endpoint (A2), then clears sw_lead_pending.
+//
+// TWO-STORE INVARIANT (load-bearing): the existing GA4 `generate_lead` push in
+// maybeFireGenerateLead STAYS PII-FREE and UNCHANGED. This module's POST is a
+// SEPARATE code path to the first-party endpoint. The integrator MUST NOT add
+// name/email/phone/message to the generate_lead dataLayer push. PII travels
+// browser -> ingest endpoint -> Store B ONLY; never browser -> GA4.
+//
+// CAPTURE-ENABLE FLAG (WS-F §2.2): all capture is gated behind config.enabled
+// so a future consent gate can switch it off without a code change.
+// ============================================================================
+
+(function (root, factory) {
+    if (typeof module === 'object' && module.exports) module.exports = factory();
+    else root.SWFormsLci = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+    'use strict';
+
+    var SW_LEAD_PENDING_KEY        = 'sw_lead_pending';          // transient PII carry
+    var SW_FORM_PENDING_SUBMIT_KEY = 'sw_form_pending_submit';   // existing (sw-forms.js)
+
+    // ---- config (deploy-time) ---------------------------------------------
+    // INGEST_URL is a PLACEHOLDER until Ryan picks the endpoint vendor (he owns
+    // the vendor/BAA decision — A2 README). Set at build/deploy. `enabled` is
+    // the capture-enable flag (WS-F consent posture).
+    var DEFAULT_CONFIG = {
+        INGEST_URL: 'https://us-central1-scienceworks-mcp.cloudfunctions.net/lci-lead-ingest',   // e.g. https://lead-ingest.scienceworkshealth.workers.dev/
+        enabled: true,
+        postTimeoutMs: 4000
+    };
+
+    // ---- guarded sessionStorage (browser default; injectable for tests) ----
+    function _ss(deps) {
+        return (deps && deps.sessionStorage)
+            || (typeof sessionStorage !== 'undefined' ? sessionStorage : null);
+    }
+    function _readJSON(store, key, dflt) {
+        try { var v = store && store.getItem(key); if (v == null) return dflt; var p = JSON.parse(v); return p == null ? dflt : p; }
+        catch (x) { return dflt; }
+    }
+    function _writeJSON(store, key, obj) {
+        try { store && store.setItem(key, JSON.stringify(obj)); return true; } catch (x) { return false; }
+    }
+    function _remove(store, key) {
+        try { store && store.removeItem(key); } catch (x) {}
+    }
+
+    // ========================================================================
+    // 1) SUBMIT-CLICK CAPTURE
+    // ========================================================================
+    // deps: { resolveLeadFields (A3), getOrCreateSwUid (BW1-D),
+    //         sessionStorage?, now? }
+    // INTEGRATION (HQ, at gate): add ONE line to the end of the existing
+    //   sw-forms.js handleFormSubmitClick(containerEl):
+    //       SWFormsLci.captureLeadPiiOnSubmitClick(containerEl, formName, deps);
+    function captureLeadPiiOnSubmitClick(container, formName, deps) {
+        deps = deps || {};
+        var store = _ss(deps);
+        var now = (deps.now || function () { return Date.now(); })();
+
+        // resolve typed PII from the form DOM (A3). Never throws.
+        var fields = { name: null, email: null, phone: null, message: null, _warnings: ['resolver_missing'] };
+        if (typeof deps.resolveLeadFields === 'function') {
+            try { fields = deps.resolveLeadFields(container, formName); } catch (x) { fields = { name: null, email: null, phone: null, message: null, _warnings: ['resolver_threw'] }; }
+        }
+
+        // write-once sw_uid (BW1-D). Ensure it exists at submit (SPEC OQ-6).
+        var swUid = null;
+        if (typeof deps.getOrCreateSwUid === 'function') {
+            try { swUid = deps.getOrCreateSwUid(); } catch (x) { swUid = null; }
+        }
+
+        var pending = {
+            pii: {
+                name:    fields.name    || null,
+                email:   fields.email   || null,
+                phone:   fields.phone   || null,
+                message: fields.message || null
+            },
+            captureWarnings: (fields._warnings || []).slice(),
+            resolved: fields._resolved || {},
+            swUid: swUid,
+            form_id: (container && container.id) || null,
+            form_name: formName || null,
+            click_ts_ms: now
+        };
+
+        _writeJSON(store, SW_LEAD_PENDING_KEY, pending);
+        return pending;   // returned for the dry-run harness; ignored in prod
+    }
+
+    // ========================================================================
+    // 2) /confirmation ASSEMBLE + POST + CLEAR
+    // ========================================================================
+    // deps: { assembleLeadProfile (A5), getOrCreateSwUid (BW1-D),
+    //         computePropensity (BW1-C), buildFeatureSnapshot (BW1-C),
+    //         fetch?, sessionStorage?, env? (for the assembler) }
+    // config: { INGEST_URL, enabled, postTimeoutMs }
+    // INTEGRATION (HQ, at gate): add ONE line inside the existing
+    //   maybeFireGenerateLead(currentPath), AFTER the existing PII-free
+    //   generate_lead push (do NOT merge PII into that push):
+    //       SWFormsLci.assembleAndPostLeadProfile(currentPath, deps, config);
+    // Returns a Promise<{posted, status, id?, skipped?}> for the harness;
+    // best-effort in prod (never blocks the user's /confirmation).
+    function assembleAndPostLeadProfile(currentPath, deps, config) {
+        deps = deps || {};
+        config = Object.assign({}, DEFAULT_CONFIG, config || {});
+        var store = _ss(deps);
+
+        if (currentPath !== '/confirmation') {
+            return _resolved({ posted: false, skipped: 'not_confirmation' });
+        }
+        if (!config.enabled) {
+            // capture-enable flag off (consent gate) — clear any pending PII.
+            _remove(store, SW_LEAD_PENDING_KEY);
+            return _resolved({ posted: false, skipped: 'capture_disabled' });
+        }
+
+        var leadPending = _readJSON(store, SW_LEAD_PENDING_KEY, null);
+        var formPending = _readJSON(store, SW_FORM_PENDING_SUBMIT_KEY, null);
+
+        // No tracked submit-click capture: this was a deep-link / refresh /
+        // un-instrumented form. GA4 still gets its fallback generate_lead (in
+        // the existing code path); we do NOT fabricate a Store-B PII row with
+        // no captured identity. Skip cleanly.
+        if (!leadPending) {
+            return _resolved({ posted: false, skipped: 'no_lead_pending' });
+        }
+
+        // assemble the FROZEN v1.0 profile (A5)
+        var captured = {
+            pii: leadPending.pii || {},
+            captureWarnings: leadPending.captureWarnings || [],
+            swUid: leadPending.swUid || null,
+            pending: formPending || {
+                form_id: leadPending.form_id,
+                form_name: leadPending.form_name,
+                click_ts_ms: leadPending.click_ts_ms
+            }
+        };
+
+        var profile;
+        try {
+            profile = deps.assembleLeadProfile(captured, {
+                getOrCreateSwUid: deps.getOrCreateSwUid,
+                computePropensity: deps.computePropensity,
+                buildFeatureSnapshot: deps.buildFeatureSnapshot
+            }, deps.env);
+        } catch (x) {
+            // assembly failed — clear PII, do not POST a malformed row.
+            _remove(store, SW_LEAD_PENDING_KEY);
+            return _resolved({ posted: false, skipped: 'assemble_failed' });
+        }
+
+        var f = deps.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+        if (!f || !config.INGEST_URL || config.INGEST_URL === '__LCI_INGEST_URL__') {
+            // no transport / unconfigured endpoint — clear PII, skip. (Until
+            // Ryan sets the vendor + URL this is the expected dev state.)
+            _remove(store, SW_LEAD_PENDING_KEY);
+            return _resolved({ posted: false, skipped: 'no_endpoint', profile: profile });
+        }
+
+        // POST — best-effort, keepalive so it survives the /confirmation nav.
+        return f(config.INGEST_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(profile),
+            keepalive: true,
+            credentials: 'omit',
+            mode: 'cors'
+        }).then(function (resp) {
+            // clear the transient PII regardless of outcome (one-shot capture)
+            _remove(store, SW_LEAD_PENDING_KEY);
+            var ok = resp && resp.ok;
+            var status = resp ? resp.status : 0;
+            if (!ok) return { posted: false, status: status, profile: profile };
+            return (resp.json ? resp.json().catch(function () { return {}; }) : Promise.resolve({}))
+                .then(function (body) { return { posted: true, status: status, id: body && body.id, profile: profile }; });
+        }).catch(function () {
+            _remove(store, SW_LEAD_PENDING_KEY);
+            return { posted: false, status: 0, skipped: 'post_threw', profile: profile };
+        });
+    }
+
+    function _resolved(v) {
+        return (typeof Promise !== 'undefined') ? Promise.resolve(v) : v;
+    }
+
+    return {
+        captureLeadPiiOnSubmitClick: captureLeadPiiOnSubmitClick,
+        assembleAndPostLeadProfile: assembleAndPostLeadProfile,
+        DEFAULT_CONFIG: DEFAULT_CONFIG,
+        SW_LEAD_PENDING_KEY: SW_LEAD_PENDING_KEY
+    };
+});
+
+    // ====== sw-ga4-valve ======
+// ============================================================================
+// sw-ga4-valve.js — the one-way GA4 valve (BW1-D / WS-D D8, WS-F Checkpoints 1-5)
+// ============================================================================
+// LOAD-BEARING COMPLIANCE MECHANISM. This is the coded gate that keeps PII and
+// named-person health inference OUT of GA4 / dataLayer / BigQuery forever. It
+// is mechanical, not textual: every push bound for GA4 passes through
+// assertGa4Safe() and a forbidden field is STRUCTURALLY excluded, not trusted
+// to be omitted.
+//
+// Clones the proven privacy-filter pattern from sw-embeds.js (§5 "Privacy
+// strip" — defensively whitelist every field; never accept a value the wrapper
+// shouldn't send). Here the same posture is applied to the GA4-bound dataLayer
+// push: a hard denylist of keys + a value-shape PII scan + a per-LeadProfile-
+// field allowlist derived from the FROZEN v1.0 schema §11 `ga4_allowed` tags.
+//
+// THE TWO-STORE RULE (vision §2, WS-F §2.1, WS-D §2.3) — non-negotiable:
+//   • PII (name/email/phone/message) NEVER enters GA4.
+//   • Named-person health inference NEVER enters GA4.
+//   • sw_uid rides GA4 PSEUDONYMOUSLY only (it is on the allowlist).
+//   • No re-identification pipeline is ever built (Checkpoint 4 — architectural;
+//     this module enforces the data side: the reverse {sw_uid -> name} join is
+//     never possible from GA4 because the name never arrives there).
+//
+// DEFECT RULE (WS-D §2.3): if any push would carry a forbidden field, that is a
+// DEFECT. In 'strict' mode (dev / dry-run / CI) assertGa4Safe THROWS so the
+// build halts and surfaces. In 'enforce' mode (production) it STRIPS the field,
+// records a violation, console.errors, and bumps a counter — fail-safe, never
+// fail-open. There is no mode in which a forbidden field reaches dataLayer.
+//
+// INTEGRATION (HQ, at Gate B1): route the GA4-bound push path through this
+// gate. The bundle's sw_push (sw-tracking.js) is the single sanctioned
+// dataLayer entry point; wrap it so the payload is run through assertGa4Safe()
+// before window.dataLayer.push(). See installGa4Valve() and the integration
+// note at the foot of this file. This module performs NO push itself.
+// ============================================================================
+
+// ----- §A. The forbidden-field list (D8 deliverable; also handed to WS-F for
+//       the GTM container audit, Checkpoint 2). Keys are matched in BOTH the
+//       camelCase storage form (schema §11) AND the snake_case logical form
+//       (the bundle/dataLayer convention, e.g. `primary_topic_cluster`,
+//       `lead_name`) because either could appear in a payload. ------------------
+
+// A.1 — PII. ga4_allowed:false, sensitivity:pii. NEVER GA4. (schema §6 / §11.3)
+const GA4_FORBIDDEN_PII = [
+    'leadName', 'lead_name',
+    'leadEmail', 'lead_email',
+    'leadPhone', 'lead_phone',
+    'leadMessage', 'lead_message',
+    'wixContactId', 'wix_contact_id',     // Wix CRM contact id = pii (§11.3)
+    'consentFlags', 'consent_flags',      // consent/disclosure state — B-only
+];
+
+// A.2 — Named-person health inference. ga4_allowed:false, sensitivity:
+//       health-inference. The dual-standard (WS-D §2.3.5): an inference may
+//       exist in GA4 ONLY as an anonymous aggregate event-param, NEVER attached
+//       to a named person. Because PII is structurally excluded above, the
+//       SAFE default for these is still DENY for the NEW build (WS-F: any field
+//       defaults to ga4_allowed:false unless WS-F explicitly approves).
+//       `primaryTopicCluster` is the deferred Ryan decision — see §C posture.
+const GA4_FORBIDDEN_HEALTH_INFERENCE = [
+    'primaryTopicCluster', 'primary_topic_cluster',
+    'topicConfidence', 'topic_confidence',
+    'primaryServiceInterest', 'primary_service_interest',
+    'serviceConfidence', 'service_confidence',
+    'primaryModality', 'primary_modality',
+    'modalityConfidence', 'modality_confidence',
+    'audienceType', 'audience_type',
+    'bestFitClinician', 'best_fit_clinician',
+    'bestFitConfidence', 'best_fit_confidence',
+    'bestFitRationale', 'best_fit_rationale',
+    'bestFitAlternates', 'best_fit_alternates',
+    'clinicianInterestTop', 'clinician_interest_top',
+    'clinicianInterestConfidence', 'clinician_interest_confidence',
+    'clinicianInterestRanked', 'clinician_interest_ranked',
+    'urgencySignal', 'urgency_signal', 'urgencyEvidence', 'urgency_evidence',
+    'likelyObjection', 'likely_objection', 'objectionConfidence', 'objection_confidence',
+    'revisits',
+    // submit-context health-adjacent fields (§11.3 ga4_allowed:false):
+    'serviceAtSubmit', 'service_at_submit', 'service_name',
+    'clinicianAtSubmit', 'clinician_at_submit', 'clinician_name',
+    'leadSourceInfoTopic', 'lead_source_info_topic',
+    'leadSourceInfoService', 'lead_source_info_service',
+];
+
+// A.3 — Propensity (behavioral but B-only; never GA4). (§11.3 / §11.4)
+const GA4_FORBIDDEN_PROPENSITY = [
+    'propensityScore', 'propensity_score',
+    'propensityBand', 'propensity_band',
+    'propensityMethod', 'propensity_method',
+    'propensityVersion', 'propensity_version',
+    'propensityTopSignals', 'propensity_top_signals', 'top_signals',
+    'featureSnapshot', 'feature_snapshot',
+];
+
+// A.4 — Identity/ops join keys that must not ride GA4 (a submissionId in GA4
+//       would be a re-identification vector once joined to Store B). (§11.3)
+const GA4_FORBIDDEN_OPS = [
+    'submissionId', 'submission_id',
+    'wixSubmissionId', 'wix_submission_id',
+    'ingestSource', 'ingest_source',
+    'retentionClass', 'retention_class',
+    'ttlExpiresAt', 'ttl_expires_at',
+    'piiRedactedAt', 'pii_redacted_at',
+];
+
+// The full hard denylist (lower-cased at match time for case-insensitivity).
+const GA4_FORBIDDEN_KEYS = new Set(
+    [].concat(
+        GA4_FORBIDDEN_PII,
+        GA4_FORBIDDEN_HEALTH_INFERENCE,
+        GA4_FORBIDDEN_PROPENSITY,
+        GA4_FORBIDDEN_OPS
+    ).map(function (k) { return k.toLowerCase(); })
+);
+
+// ----- §B. Value-shape PII scan (defense-in-depth). Catches PII smuggled
+//       under an innocuous key name (e.g. someone stuffs an email into a
+//       `label` field). Mirrors sw-embeds dropping payload.value outright. -----
+const PII_VALUE_PATTERNS = [
+    { name: 'email',  re: /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i },
+    // Phone: a run of 10+ digits, each optionally preceded by phone separators
+    // ( space ( ) - . + ), so grouped formats like "+1 (615) 555-0100" match
+    // even though separators precede a digit group. Only STRING values are
+    // scanned (numbers are exempt — see E.2), so numeric epochs/ids don't trip
+    // it; a string id with 10+ digits being stripped is acceptable fail-safe.
+    { name: 'phone',  re: /(?:[\s()\-.+]*\d){10,}/ },
+];
+
+// Keys whose VALUES are expected to be free-form/number and should be exempt
+// from the value scan to avoid false positives (none ride GA4 with user text
+// today; kept minimal and explicit). Stored lower-cased; matched against
+// key.toLowerCase() at scan time (E.2).
+//
+// session_id / sw_session_id (FINDING 2 fix, 2026-06-25): the bundle's
+// session id is `s_<13-digit Date.now()>_<rand>` — a benign PSEUDONYMOUS id
+// that the live bundle already sends to GA4 today, NOT PII. Its 13 consecutive
+// digits false-positive the phone value-shape pattern (§B), so the valve would
+// strip it — a regression. Exempting it from the VALUE scan ONLY restores the
+// existing non-PII behavior. The hard PII denylist (§A: leadName/leadEmail/
+// leadPhone/leadMessage) is UNTOUCHED — a key named lead_* is still blocked by
+// E.1 regardless of this exemption; only the §B value-shape scan is skipped for
+// these two explicitly-pseudonymous keys.
+const VALUE_SCAN_EXEMPT_KEYS = new Set([
+    'session_id',
+    'sw_session_id',
+]);
+
+// ----- §C. Inference GA4 posture (the DEFERRED Ryan decision lands here) ------
+// W0-1 confirmed the scoring ledger is DORMANT, so `primary_topic_cluster` is
+// pushed to GA4 as `unassigned` today (inert). Wiring C2-parent (BW1-C) makes
+// it carry REAL clinical-area values — at which point a health-adjacent
+// inference begins entering GA4. Ryan deferred the keep/coarsen/pull call to
+// THIS build (per MASTER-PLAN §0 + the Gate-B0 decision). The valve implements
+// all three so HQ/Ryan can SET the posture without a code change; the DEFAULT
+// is the safest (deny), matching the strict new-build rule. DO NOT treat the
+// default as the decision — see SURFACE-TO-HQ-ga4-posture.md.
+//
+//   'deny'    — strip it from every GA4 push (safest; strict new-build rule).
+//   'coarsen' — replace the specific cluster with a generic boolean signal
+//               `has_topic_interest:true` (presence-only; no clinical area).
+//   'allow'   — pass the cluster value as an anonymous aggregate event-param
+//               (the pre-existing behaviour; §0 "accepted residual" — but note
+//               §0 was decided when the value was always 'unassigned').
+//
+// NOTE: posture NEVER overrides the PII exclusion. Even under 'allow', the
+// cluster rides GA4 only as an anonymous aggregate — PII is still stripped, so
+// it can never be attached to a named person via this path (the dual-standard).
+const GA4_INFERENCE_POSTURE = {
+    primaryTopicCluster:    'deny',   // <-- Decision C set 'allow' at deploy.
+    primaryServiceInterest: 'deny',   // <-- Decision C set 'allow' at deploy.
+    primaryModality:        'deny',   // <-- Decision C set 'allow' at deploy.
+    topicConfidence:        'deny',   // <-- Decision C set 'allow' at deploy.
+    serviceConfidence:      'deny',   // <-- Decision C set 'allow' at deploy.
+    modalityConfidence:     'deny',   // <-- Decision C set 'allow' at deploy.
+    // every other inference field stays hard-denied (in §A.2); only
+    // primaryTopicCluster has a configurable knob because only it is pushed by
+    // the pre-existing bundle path.
+};
+
+// Map every accepted spelling (camelCase storage form + snake_case dataLayer
+// form) of a posture-governed key to its canonical posture key. A forbidden key
+// present here is governed by GA4_INFERENCE_POSTURE rather than hard-denied; any
+// forbidden key NOT present here (all PII, propensity, join keys, the other
+// inferences) is unconditionally stripped.
+const POSTURE_GOVERNED_KEYS = {
+    'primarytopiccluster':      'primaryTopicCluster',
+    'primary_topic_cluster':    'primaryTopicCluster',
+    'primaryserviceinterest':   'primaryServiceInterest',
+    'primary_service_interest': 'primaryServiceInterest',
+    'primarymodality':          'primaryModality',
+    'primary_modality':         'primaryModality',
+    'topicconfidence':          'topicConfidence',
+    'topic_confidence':         'topicConfidence',
+    'serviceconfidence':        'serviceConfidence',
+    'service_confidence':       'serviceConfidence',
+    'modalityconfidence':       'modalityConfidence',
+    'modality_confidence':      'modalityConfidence',
+};
+
+// When posture is 'coarsen', the cluster key is replaced by this presence flag.
+const COARSEN_FLAG_KEY = 'has_topic_interest';
+
+// ----- §D. Default config + modes -----------------------------------------
+const GA4_VALVE_DEFAULTS = {
+    mode: 'enforce',               // 'enforce' (prod: strip+log) | 'strict' (dev/CI: throw)
+    valueScan: true,               // run the value-shape PII scan (§B)
+    inferencePosture: GA4_INFERENCE_POSTURE,
+};
+
+// Observability globals (mirror sw-embeds' __sw_embed_* counters).
+function _bumpBlocked(n) {
+    if (typeof globalThis !== 'undefined') {
+        globalThis.__sw_ga4_valve_blocked = (globalThis.__sw_ga4_valve_blocked || 0) + (n || 1);
+    }
+}
+
+// ----- §E. The gate -------------------------------------------------------
+// assertGa4Safe(eventName, payload, opts) -> { ok, violations:[{key,reason,via}], cleaned }
+//   - Never mutates the input payload (returns a new `cleaned` object).
+//   - In 'strict' mode, throws on the FIRST violation (halt-and-surface).
+//   - In 'enforce' mode, strips every violating key and returns ok:false with
+//     the violation list (caller pushes `cleaned`, fail-safe).
+function assertGa4Safe(eventName, payload, opts) {
+    const cfg = Object.assign({}, GA4_VALVE_DEFAULTS, opts || {});
+    const posture = Object.assign({}, GA4_INFERENCE_POSTURE, cfg.inferencePosture || {});
+    const violations = [];
+    const cleaned = {};
+
+    if (!payload || typeof payload !== 'object') {
+        return { ok: true, violations: [], cleaned: {} };
+    }
+
+    const keys = Object.keys(payload);
+    for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const lower = key.toLowerCase();
+        const val = payload[key];
+
+        // E.1 — hard denylist (exact key match, case-insensitive).
+        if (GA4_FORBIDDEN_KEYS.has(lower)) {
+            // §C posture exception for the 6 posture-governed inference keys (Decision C).
+            const postureKey = POSTURE_GOVERNED_KEYS[lower];
+            if (postureKey) {
+                const p = posture[postureKey] || 'deny';
+                if (p === 'allow') {
+                    cleaned[key] = val;                       // anonymous aggregate
+                    continue;
+                }
+                if (p === 'coarsen') {
+                    const present = val != null && val !== '' && val !== 'unassigned';
+                    cleaned[COARSEN_FLAG_KEY] = !!present;    // presence-only flag
+                    continue;
+                }
+                // p === 'deny' -> fall through to violation.
+            }
+            violations.push({ key: key, reason: 'forbidden_field', via: 'denylist' });
+            _failOrStrip(cfg, eventName, key, 'forbidden_field');
+            continue;
+        }
+
+        // E.2 — value-shape PII scan (defense-in-depth).
+        if (cfg.valueScan && typeof val === 'string' && !VALUE_SCAN_EXEMPT_KEYS.has(lower)) {
+            const hit = _piiValueHit(val);
+            if (hit) {
+                violations.push({ key: key, reason: 'pii_value_' + hit, via: 'value_scan' });
+                _failOrStrip(cfg, eventName, key, 'pii_value_' + hit);
+                continue;
+            }
+        }
+
+        // E.3 — passes the gate.
+        cleaned[key] = val;
+    }
+
+    if (violations.length) _bumpBlocked(violations.length);
+    return { ok: violations.length === 0, violations: violations, cleaned: cleaned };
+}
+
+function _failOrStrip(cfg, eventName, key, reason) {
+    if (cfg.mode === 'strict') {
+        throw new Error(
+            '[sw-ga4-valve] DEFECT: forbidden field "' + key + '" (' + reason +
+            ') on GA4-bound event "' + (eventName || '?') +
+            '". Two-store rule violation — halting. (strict mode)'
+        );
+    }
+    // enforce mode: strip + log, never fail-open.
+    if (typeof console !== 'undefined' && console.error) {
+        console.error('[sw-ga4-valve] blocked "' + key + '" (' + reason +
+            ') from GA4 event "' + (eventName || '?') + '" — stripped (enforce mode).');
+    }
+}
+
+function _piiValueHit(str) {
+    for (let i = 0; i < PII_VALUE_PATTERNS.length; i++) {
+        if (PII_VALUE_PATTERNS[i].re.test(str)) return PII_VALUE_PATTERNS[i].name;
+    }
+    return null;
+}
+
+// isForbiddenForGa4(key) -> boolean   (helper for code-review tooling, F4)
+function isForbiddenForGa4(key) {
+    return GA4_FORBIDDEN_KEYS.has(String(key).toLowerCase());
+}
+
+// getForbiddenList() -> string[]   (the canonical list handed to WS-F, F4/GTM
+// audit Checkpoint 2). Returns the sorted unique denylist.
+function getForbiddenList() {
+    return Array.from(GA4_FORBIDDEN_KEYS).sort();
+}
+
+// ----- §F. Integration hook (HQ wires at Gate B1; this module pushes nothing)
+// installGa4Valve(swPush, opts) -> wrapped push function.
+// Returns a function with the SAME signature as sw_push(eventName, params) that
+// runs params through assertGa4Safe() before delegating to the real sw_push.
+// HQ decides whether to wrap sw_push globally or to gate only the GA4-bound
+// pushes; the recommended posture is to gate the single sanctioned entry point
+// (sw_push) so every dataLayer push is filtered by construction.
+function installGa4Valve(swPush, opts) {
+    if (typeof swPush !== 'function') {
+        throw new Error('[sw-ga4-valve] installGa4Valve requires the real sw_push function');
+    }
+    return function gatedPush(eventName, params) {
+        const res = assertGa4Safe(eventName, params, opts);
+        // In enforce mode, push the cleaned payload (forbidden keys stripped).
+        return swPush(eventName, res.cleaned);
+    };
+}
+
+// ----- §G. Test-only reset of the blocked counter -------------------------
+function __resetValveCountersForTest() {
+    if (typeof globalThis !== 'undefined') globalThis.__sw_ga4_valve_blocked = 0;
+}
+
+// ============================================================================
+// THE 5 ENFORCEMENT CHECKPOINTS (WS-D §2.3 / WS-F §2.1) — where each lives:
+//   1. Bundle-level field allowlist (PRIMARY) ......... THIS MODULE (assertGa4Safe).
+//   2. GTM container audit ............................ getForbiddenList() feeds WS-F's
+//                                                       audit checklist (F4). No GA4
+//                                                       tag/variable may reference a
+//                                                       key on the denylist.
+//   3. Bridge direction is one-way by construction .... the ingest bridge (BW1-A)
+//                                                       POSTs the profile+PII to Store B
+//                                                       and NEVER calls sw_push with PII;
+//                                                       lint: no GA4_FORBIDDEN_* key may
+//                                                       appear in a dataLayer push from
+//                                                       sw-forms.js (code-review gate F4).
+//   4. No re-identification pipeline .................. architectural (WS-F Checkpoint 4):
+//                                                       no job maps GA4 sw_uid -> Store B
+//                                                       name. The data side is enforced
+//                                                       here — the name never reaches GA4,
+//                                                       so the reverse join has no source.
+//   5. Inference dual-standard ........................ §C posture: an inference may ride
+//                                                       GA4 only as an anonymous aggregate
+//                                                       (never attached to PII, which is
+//                                                       structurally excluded). Decision C
+//                                                       (Ryan 2026-06-25): the 6-key set is
+//                                                       allowed as user-properties at
+//                                                       deploy; module default stays deny.
+// ============================================================================
+
     // ====== sw-forms ======
 // ============================================================================
 // sw-forms.js — Form interaction listeners (form_start, generate_lead, form_abandonment)
@@ -1659,6 +3570,20 @@ function handleFormSubmitClick(containerEl) {
         service_context:      svcCtx,
         click_ts_ms:          Date.now()
     });
+
+    // -- LCI (BW1-A A4): capture typed PII at submit-click into the transient
+    //    sw_lead_pending sessionStorage hop, keyed to the write-once sw_uid.
+    //    The form DOM is gone after Wix's hard-nav to /confirmation, so PII must
+    //    be read here. SEPARATE code path from GA4 — NO PII enters dataLayer.
+    //    Fail-safe: never let lead-capture crash the existing submit handler.
+    try {
+        if (typeof SWFormsLci !== 'undefined' && SWFormsLci.captureLeadPiiOnSubmitClick) {
+            SWFormsLci.captureLeadPiiOnSubmitClick(
+                containerEl, formName,
+                (window.__sw_lci_deps || {})
+            );
+        }
+    } catch (e) { /* non-fatal */ }
 }
 
 // ----- generate_lead (called from bootstrap on /confirmation) ----------
@@ -1691,6 +3616,20 @@ function maybeFireGenerateLead(currentPath) {
             value:                   0,
             _sw_attribution_source:  'confirmation_page_fallback'
         }, leadInfo));
+
+        // -- LCI (BW1-A A4): assemble + POST the Store-B lead profile. On the
+        //    no-pending fallback this self-skips (skipped:'no_lead_pending') —
+        //    we never fabricate a PII row without a captured identity. NO PII is
+        //    added to the GA4 push above. Best-effort; never blocks the user.
+        try {
+            if (typeof SWFormsLci !== 'undefined' && SWFormsLci.assembleAndPostLeadProfile) {
+                SWFormsLci.assembleAndPostLeadProfile(
+                    currentPath,
+                    (window.__sw_lci_deps || {}),
+                    (window.__sw_lci_config || {})
+                );
+            }
+        } catch (e) { /* non-fatal */ }
         return;
     }
 
@@ -1706,6 +3645,21 @@ function maybeFireGenerateLead(currentPath) {
         value:                   pending.lead_value_estimate || 0,
         _sw_attribution_source:  stale ? 'submit_click_stale' : 'submit_click_attribution'
     }, leadInfo, pending.service_context || {}));
+
+    // -- LCI (BW1-A A4): assemble + POST the Store-B lead profile from the
+    //    captured sw_lead_pending PII + this pending submit. SEPARATE path from
+    //    the GA4 push above — NO PII enters dataLayer. Best-effort; never blocks.
+    //    NOTE: this runs BEFORE the SW_FORM_PENDING_SUBMIT_KEY clear below so the
+    //    assembler still sees the pending submit context.
+    try {
+        if (typeof SWFormsLci !== 'undefined' && SWFormsLci.assembleAndPostLeadProfile) {
+            SWFormsLci.assembleAndPostLeadProfile(
+                currentPath,
+                (window.__sw_lci_deps || {}),
+                (window.__sw_lci_config || {})
+            );
+        }
+    } catch (e) { /* non-fatal */ }
 
     // Clear both keys — the journey is complete.
     try { window.sessionStorage.removeItem(SW_FORM_PENDING_SUBMIT_KEY); } catch (e) {}
@@ -2303,6 +4257,35 @@ function initEmbedListener() {
         if (typeof window === 'undefined') return;   // SSR guard (defensive)
         window.dataLayer = window.dataLayer || [];
 
+        // -- LCI sw_uid (BW1-D): mint/resolve the write-once first-party id
+        //    BEFORE the first form scan, so every later module (sw-forms capture,
+        //    the GA4 stream, the Store-B POST) sees the SAME value. Idempotent +
+        //    memoised; never throws.
+        try { getOrCreateSwUid(); } catch (e) { /* non-fatal */ }
+
+        // -- LCI deps/config (BW1-A bridge): assemble ONCE per page so the two
+        //    sw-forms.js call-sites can read them. `deps` wires the BW1-D id
+        //    provider, the BW1-C scorer + snapshot, the BW1-A A5 assembler, and
+        //    the A3 field resolver. `config.INGEST_URL` is a DEPLOY-TIME
+        //    placeholder (Ryan picks the vendor/endpoint; HQ sets it at re-pin).
+        if (typeof window.__sw_lci_deps === 'undefined') {
+            window.__sw_lci_deps = {
+                getOrCreateSwUid:     (typeof getOrCreateSwUid === 'function') ? getOrCreateSwUid : null,
+                computePropensity:    (typeof computePropensity === 'function') ? computePropensity : null,
+                buildFeatureSnapshot: (typeof buildFeatureSnapshot === 'function') ? buildFeatureSnapshot : null,
+                assembleLeadProfile:  (window.SWLeadAssembler && window.SWLeadAssembler.assembleLeadProfile)
+                                        ? window.SWLeadAssembler.assembleLeadProfile : null,
+                resolveLeadFields:    (window.SWLeadFields && window.SWLeadFields.resolveLeadFields)
+                                        ? window.SWLeadFields.resolveLeadFields : null
+            };
+            window.__sw_lci_config = {
+                INGEST_URL: 'https://us-central1-scienceworks-mcp.cloudfunctions.net/lci-lead-ingest',   // <-- HQ sets the real endpoint at deploy
+                enabled: true,
+                postTimeoutMs: 4000
+            };
+        }
+        // (the sw-forms.js call-sites read window.__sw_lci_deps / .__sw_lci_config.)
+
         // -- Gather raw page signals --
         // Path D: pathname comes straight from window.location, lowercased and
         // trailing-slash-trimmed to normalize against the taxonomy tables.
@@ -2353,6 +4336,16 @@ function initEmbedListener() {
             try { blogAttrs = extractBlogContext(normalizedPath); } catch (e) { /* leave blank */ }
         }
 
+        // -- LCI C2-parent (BW1-C): wire the scoring write-path (W0-1 DORMANT) -
+        // Feed the topic/service/modality ledgers + distinct counts from the
+        // page we just classified, BEFORE reading the winners below. Calls the
+        // REAL sw-scoring primitives (updateScore/incrementCount/addDistinct,
+        // already in scope). Slugs only, never PII. Fires once per page bootstrap.
+        try {
+            applyLedgerFeeds({ pageType: pageType, serviceAttrs: serviceAttrs,
+                               assessmentAttrs: assessmentAttrs, blogAttrs: blogAttrs });
+        } catch (err) { if (typeof console !== 'undefined') console.warn('[sw] scoring-feed failed:', err); }
+
         // -- Derived user properties from the scoring engine --
         const userProps = getAllUserProperties();
         const counts = getAllCounts();
@@ -2366,6 +4359,11 @@ function initEmbedListener() {
             info_topic:           infoAttrs.info_topic   || '',
             info_service:         infoAttrs.info_service || '',
             page_location:        (window.location && window.location.href) || '',
+
+            // LCI sw_uid (BW1-D) — pseudonymous first-party id. ga4_allowed:true
+            // (it is on the valve allowlist; it is NOT user_id, NOT PII). Rides
+            // every GA4 push as the join key (D6).
+            sw_uid:               (function(){ try { return getOrCreateSwUid(); } catch (e) { return ''; } })(),
 
             // Session-scope
             session_id:           session.session_id,
@@ -2580,6 +4578,57 @@ function initEmbedListener() {
             }
         }
     }
+
+    // ------------------------------------------------------------------------
+    // LCI GA4 ONE-WAY VALVE (BW1-D D8) — install BEFORE the first push.
+    // ------------------------------------------------------------------------
+    // The load-bearing compliance gate. sw_push() merges window.__sw_context
+    // into EVERY payload, so the health-adjacent `primary_topic_cluster`
+    // user-property rides in via the context merge, NOT via params — therefore
+    // the valve MUST gate the FINAL merged payload at the true GA4 boundary:
+    // window.dataLayer.push. We wrap it so assertGa4Safe() runs on the merged
+    // object before it reaches the dataLayer (and thus GTM/GA4). PII + every
+    // named-person inference is stripped/blocked by construction; sw_uid rides
+    // pseudonymously.
+    //
+    // POSTURE (Ryan's Gate-B1 ruling, surfaced by BW1-D SURFACE-TO-HQ): ALLOW /
+    // user-property form for primary_topic_cluster — it passes through the valve
+    // as an anonymous aggregate. (`form: 'user_property'` is the GTM-side shape:
+    // GTM reads primary_topic_cluster off the dataLayer as a GA4 user-property,
+    // unchanged from the pre-existing push. The bundle's only job is to let the
+    // value ride the dataLayer, which `allow` does.) The PII strip stays
+    // enforced regardless of posture (dual-standard; valve test 5b).
+    var __SW_GA4_VALVE_OPTS = {
+        mode: 'enforce',
+        valueScan: true,
+        inferencePosture: { primaryTopicCluster: 'allow', primaryServiceInterest: 'allow',
+                            primaryModality: 'allow', topicConfidence: 'allow',
+                            serviceConfidence: 'allow', modalityConfidence: 'allow' },
+        form: 'user_property'   // DECISION C: all 6 inferences ride as GA4 user-properties (GTM-side shape; documentary)
+    };
+    try {
+        if (typeof assertGa4Safe === 'function') {
+            window.dataLayer = window.dataLayer || [];
+            if (!window.__sw_ga4_valve_installed) {
+                window.__sw_ga4_valve_installed = true;
+                var __sw_real_dl_push = window.dataLayer.push.bind(window.dataLayer);
+                window.dataLayer.push = function (payload) {
+                    try {
+                        if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+                            var __res = assertGa4Safe(payload.event, payload, __SW_GA4_VALVE_OPTS);
+                            return __sw_real_dl_push(__res.cleaned);
+                        }
+                    } catch (e) {
+                        // strict-mode throw or any valve error must NOT crash the
+                        // page; fall through to a raw push only in that defensive
+                        // case (enforce mode never throws, so this is dev-only).
+                        if (typeof console !== 'undefined') console.warn('[sw] ga4 valve error:', e);
+                    }
+                    return __sw_real_dl_push(payload);
+                };
+            }
+        }
+    } catch (e) { if (typeof console !== 'undefined') console.warn('[sw] ga4 valve install failed:', e); }
 
     // Run bootstrap SYNCHRONOUSLY. As a HEAD custom embed this executes during
     // head parsing, before GTM's async gtm.js fetches — which means our dataLayer
