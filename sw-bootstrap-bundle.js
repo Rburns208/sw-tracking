@@ -179,6 +179,25 @@ const CLINICIAN_BY_PATH = {
         clinician_specialties: ['adhd', 'autism', 'audhd', 'executive_function'],
         clinician_takes_insurance: false,
         clinician_accepting_new: true
+    },
+    // Added 2026-07-03 from the confirmed team roster (memory/people/team-roster.md).
+    '/hannah-pollok': {
+        clinician_name: 'hannah_pollok',
+        clinician_role: 'therapist',
+        clinician_specialty_primary: 'couples_family_therapy',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['couples_relationship_issues', 'family_parenting_dynamics', 'adhd', 'autism', 'audhd', 'executive_function', 'perimenopause_neurodivergence', 'health_psychology', 'anxiety', 'trauma_ptsd', 'chronic_illness'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
+    },
+    '/bailey-basham': {
+        clinician_name: 'bailey_basham',
+        clinician_role: 'therapist',
+        clinician_specialty_primary: 'trauma',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['trauma_ptsd', 'couples_relationship_issues', 'family_parenting_dynamics', 'anxiety', 'adhd', 'autism', 'executive_function'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     }
 };
 
@@ -273,8 +292,15 @@ const FORM_NAME_BY_ID = {
     '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'clinician_kiesa_kelly',          // /psychological-assessments + /kiesakelly
     'e522454a-a18f-40e6-a532-aebe5daed5ea': 'clinician_laura_travers_heinig', // /laura-travers-heinig
     'd0a38253-f880-402f-8487-ee52282b757d': 'clinician_catherine_cavin',      // /catherinecavin
-    'e9ea2c38-cdb6-4fe9-a3c3-6cc8d7c1d39b': 'clinician_kathryn_wood',         // /kathryn-wood
-    '585c11e1-70a3-43f9-9ad2-094ad71c6793': 'clinician_ryan_robertson'        // /ryan-robertson
+    // 2026-07-03: this shared Wix form instance is reassigned Kathryn -> Bailey
+    // (Bailey is replacing Kathryn). /kathryn-wood AND /bailey-basham render this
+    // SAME form UUID. Lead clinician attribution is page-path based
+    // (CLINICIAN_BY_PATH -> clinicianAtSubmit), so both pages attribute correctly;
+    // only form_name follows the UUID to Bailey during the transition.
+    'e9ea2c38-cdb6-4fe9-a3c3-6cc8d7c1d39b': 'clinician_bailey_basham',       // /bailey-basham (+ /kathryn-wood, shared instance)
+    '585c11e1-70a3-43f9-9ad2-094ad71c6793': 'clinician_ryan_robertson',      // /ryan-robertson
+    // Hannah Pollok — unique profile-contact-form UUID (captured live 2026-07-03)
+    'd3de6b0d-8789-450a-bdff-fc8de409b525': 'clinician_hannah_pollok'        // /hannah-pollok
 };
 
 // Canonical form_name values, with form_type classification.
@@ -310,8 +336,10 @@ const FORM_META = {
     clinician_kiesa_kelly:         { form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_laura_travers_heinig:{ form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_catherine_cavin:     { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_kathryn_wood:        { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 }
+    clinician_kathryn_wood:        { form_type: 'clinician_contact', lead_value_estimate: 250 }, // historical: shared UUID reassigned to Bailey 2026-07-03 (retained for prior leads)
+    clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_hannah_pollok:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_bailey_basham:       { form_type: 'clinician_contact', lead_value_estimate: 250 }
 };
 
 // --------------------------------------------------------------------------
@@ -999,6 +1027,284 @@ function getSessionCounter(name) {
     const key = `sw_cnt_${name}`;
     return parseInt(safeGetSession(key, '0'), 10) || 0;
 }
+    // ====== sw-journey ======
+// ============================================================================
+// sw-journey.js — Ordered cross-session journey breadcrumb (WS-B Phase 2)
+// ============================================================================
+// Replaces the lossy `sw_session_page_count` scalar with an in-order, bounded,
+// cross-session-stitched log of the pages a prospect visited. Read at submit by
+// the lead assembler (via the deps bridge) to populate `journeyBreadcrumb` +
+// the five journey rollups on the Store-B Lead Profile.
+//
+// Storage-first + PII-FREE BY CONSTRUCTION: paths, page types, taxonomy labels,
+// and timings only — never name/email/message (identity attaches at submit in
+// the assembler, never here). Two-store rule: this module NEVER pushes to GA4.
+//
+// Mirrors proven in-bundle patterns:
+//   - sw-first-touch.js       : localStorage cross-session persistence
+//   - sw-session.js           : sessionStorage tab state + getCurrentSessionContext()
+//   - sw-forms.js abandonment : visibilitychange→hidden + pagehide + sw:navigate exit flush
+//   - safe*/readJSON/writeJSON: already swallow QuotaExceededError (return false)
+//
+// Lifecycle (wired in the masterPage bootstrap FOOTER):
+//   initEntry({path,pageType,taxCtx})  on each bootstrapTracking()
+//                                      (full load AND sw:navigate re-bootstrap)
+//   finalizeEntry()                    on visibilitychange→hidden (PRIMARY),
+//                                      pagehide (bfcache backstop), sw:navigate
+//                                      (SPA-exit); idempotent re-finalize on a
+//                                      hidden→visible→hidden cycle. Never 'unload'.
+//   SPA safety: initEntry() self-finalizes any still-open prior entry before it
+//               appends the new one, so ordering is correct regardless of nav mode.
+//   (Spike T-1 confirmed live: top-level Wix nav is full-load; the pushState
+//    patch/sw:navigate path is covered too.)
+//
+// Bounding (spike T-2: worst-case entry ~411 B × cap 50 ≈ ~20.6 KB, ~0.4% of the
+// shared ~5 MB origin budget): cross-session ring cap 50, drop-oldest but PROTECT
+// the first-touch/origin entry (index 0) + all current-session entries.
+//
+// Capture kill-switch (WS-B T-8): set `window.__SW_JOURNEY_ENABLED = false` to
+// no-op ALL capture + reads without redeploying the main bundle. Defaults ON
+// (GATE-0 approved the breadcrumb; Ryan owns the PP disclosure, confirmed in place).
+// ============================================================================
+
+// ---- keys + bounds --------------------------------------------------------
+const LS_LOG_KEY   = 'sw_journey_log';       // cross-session ring (localStorage)
+const SS_SESS_KEY  = 'sw_journey_session';   // within-tab sequence (sessionStorage)
+const LS_TOTAL_KEY = 'sw_journey_pv_total';  // persistent lifetime pageview counter
+const RING_CAP     = 50;   // confirmed by spike T-2
+const SESSION_CAP  = 50;   // pathological-loop guard for the within-tab array
+
+// ---- in-memory live-entry pointer (survives SPA nav within one IIFE) ------
+let _jLiveSeq = null;   // seq of the currently-open (unfinalized) entry, or null
+
+// ---- kill-switch (WS-B T-8) ----------------------------------------------
+function _jEnabled() {
+    try { return (typeof window === 'undefined') ? false : (window.__SW_JOURNEY_ENABLED !== false); }
+    catch (e) { return false; }
+}
+
+// ---- funnel-depth ranking for deepest_page_type ---------------------------
+const _J_DEPTH_RANK = {
+    homepage: 0, careers: 0, other: 0,
+    blog_post: 1, info_landing: 1,
+    assessment_tool: 2, service: 2,
+    clinician: 3,
+    contact: 4
+};
+function _jDepthRank(pt) { return (pt in _J_DEPTH_RANK) ? _J_DEPTH_RANK[pt] : 0; }
+
+// ---- store read helpers ---------------------------------------------------
+function _jReadLog()  { const a = readJSON('local', LS_LOG_KEY, []);    return Array.isArray(a) ? a : []; }
+function _jReadSess() { const a = readJSON('session', SS_SESS_KEY, []); return Array.isArray(a) ? a : []; }
+
+function _jCurrentSessionId() {
+    try { return (getCurrentSessionContext() || {}).session_id || ''; } catch (e) { return ''; }
+}
+
+// Drop-oldest but PROTECT index 0 (first-touch/origin) + current-session entries.
+// Removes at most ONE entry per call; returns the (possibly) mutated array.
+function _jEvictOldest(arr, curSessionId) {
+    for (let i = 1; i < arr.length; i++) {         // start at 1: never evict the origin
+        if (arr[i] && arr[i].session_id !== curSessionId) { arr.splice(i, 1); return arr; }
+    }
+    // everything is protected → drop index 1 to bound pathological overflow
+    if (arr.length > 1) arr.splice(1, 1);
+    return arr;
+}
+
+// Persist the ring with QuotaExceeded degradation: writeJSON returns false when
+// it swallowed a QuotaExceededError → drop the oldest evictable entry and retry
+// ONCE, then give up silently (never throw).
+function _jPersistLog(arr) {
+    if (writeJSON('local', LS_LOG_KEY, arr)) return true;
+    const trimmed = _jEvictOldest(arr.slice(), _jCurrentSessionId());
+    if (trimmed.length < arr.length && writeJSON('local', LS_LOG_KEY, trimmed)) return true;
+    return false;  // silent give-up
+}
+function _jPersistSess(arr) { return writeJSON('session', SS_SESS_KEY, arr); }
+
+function _jBumpTotal() {
+    let n = readJSON('local', LS_TOTAL_KEY, 0);
+    n = (typeof n === 'number' && n >= 0) ? n + 1 : 1;
+    try { writeJSON('local', LS_TOTAL_KEY, n); } catch (e) {}
+    return n;
+}
+
+function _jIsHighIntent(path, pageType) {
+    if (pageType === 'contact' || pageType === 'service' || pageType === 'clinician') return true;
+    return /(?:pricing|insurance|book|booking|cost|fees?|schedule|consult)/.test(path || '');
+}
+function _jRevisitIndex(log, path) {
+    let n = 0;
+    for (let i = 0; i < log.length; i++) if (log[i] && log[i].path === path) n++;
+    return n;   // 0 = first time this path appears in the log
+}
+function _jLastExitTs(log) {
+    if (!log.length) return null;
+    const last = log[log.length - 1];
+    if (last.exited_ts_ms != null) return last.exited_ts_ms;
+    return (last.entered_ts_ms != null) ? last.entered_ts_ms : null;
+}
+function _jFindIdxBySeq(arr, seq) {
+    for (let i = arr.length - 1; i >= 0; i--) if (arr[i] && arr[i].seq === seq) return i;
+    return -1;
+}
+function _jSwUid() {
+    try { return safeGetLocal('sw_uid', null); } catch (e) { return null; }
+}
+function _jNormPath(p) {
+    const raw = (p != null) ? String(p)
+              : ((typeof window !== 'undefined' && window.location) ? window.location.pathname : '/');
+    return (raw || '/').toLowerCase().replace(/\/$/, '') || '/';
+}
+
+// ---------------------------------------------------------------------------
+// initEntry — append a stub entry on page ENTRY. Called by masterPage bootstrap
+// (full load AND sw:navigate). `opts` carries the already-computed page signals
+// so this module doesn't re-derive them: { path, pageType, taxCtx }.
+// ---------------------------------------------------------------------------
+function initEntry(opts) {
+    if (!_jEnabled()) return;
+    opts = opts || {};
+    try {
+        // Close any still-open prior entry first (SPA nav had no exit flush).
+        if (_jLiveSeq != null) { try { finalizeEntry(); } catch (e) {} }
+
+        const now  = Date.now();
+        const sess = getCurrentSessionContext() || {};
+        const log  = _jReadLog();
+        const sarr = _jReadSess();
+
+        const path     = _jNormPath(opts.path);
+        const pageType = String(opts.pageType || 'other');
+        const taxCtx   = (opts.taxCtx == null) ? '' : String(opts.taxCtx);
+        const seq      = log.length ? ((log[log.length - 1].seq | 0) + 1) : 0;
+        const prevExit = _jLastExitTs(log);
+
+        const entry = {
+            seq:              seq,
+            session_id:       sess.session_id || '',
+            session_number:   (sess.session_number | 0) || 1,
+            path:             path,
+            page_type:        pageType,
+            tax_ctx:          taxCtx,
+            entered_ts_ms:    now,
+            exited_ts_ms:     null,
+            elapsed_ms:       null,
+            gap_from_prev_ms: (prevExit != null) ? (now - prevExit) : null,
+            revisit_index:    _jRevisitIndex(log, path),
+            is_high_intent:   _jIsHighIntent(path, pageType),
+            // Phase-3 enrichment slots (declared now for schema stability)
+            engaged_dwell_ms: null,
+            scroll:           null,
+            sections:         null
+        };
+
+        // cross-session ring (evict past cap, protecting origin + current session)
+        log.push(entry);
+        while (log.length > RING_CAP) {
+            const before = log.length;
+            _jEvictOldest(log, entry.session_id);
+            if (log.length >= before) break;   // all protected — stop (bounded overflow)
+        }
+        _jPersistLog(log);
+
+        // within-tab sequence (pathological-loop cap)
+        sarr.push(entry);
+        while (sarr.length > SESSION_CAP) sarr.shift();
+        _jPersistSess(sarr);
+
+        _jBumpTotal();
+        _jLiveSeq = seq;
+    } catch (e) { /* tracking must never throw into bootstrap */ }
+}
+
+// ---------------------------------------------------------------------------
+// finalizeEntry — close the live entry on page EXIT. Idempotent: a
+// hidden→visible→hidden cycle updates exited/elapsed in place, never appends.
+// ---------------------------------------------------------------------------
+function finalizeEntry() {
+    if (!_jEnabled()) return;
+    if (_jLiveSeq == null) return;
+    try {
+        const now = Date.now();
+
+        const log = _jReadLog();
+        const li = _jFindIdxBySeq(log, _jLiveSeq);
+        if (li >= 0) {
+            const entered = log[li].entered_ts_ms;
+            log[li].exited_ts_ms = now;
+            log[li].elapsed_ms   = (entered != null) ? (now - entered) : null;
+            _jPersistLog(log);
+        }
+
+        const sarr = _jReadSess();
+        const si = _jFindIdxBySeq(sarr, _jLiveSeq);
+        if (si >= 0) {
+            const entered = sarr[si].entered_ts_ms;
+            sarr[si].exited_ts_ms = now;
+            sarr[si].elapsed_ms   = (entered != null) ? (now - entered) : null;
+            _jPersistSess(sarr);
+        }
+        // Keep _jLiveSeq so a later hidden re-finalizes in place; initEntry()
+        // clears it by opening the next entry.
+    } catch (e) { /* never throw */ }
+}
+
+// ---------------------------------------------------------------------------
+// getJourneyForBridge — normalized, bounded, PII-FREE read for the assembler.
+// (§3.6) Returns rollups + the ordered journey array. Consumed via the deps
+// bridge in sw-lead-assembler.js.
+// ---------------------------------------------------------------------------
+function getJourneyForBridge() {
+    try {
+        const sess = getCurrentSessionContext() || {};
+        if (!_jEnabled()) return _jEmptyBridge(sess);
+
+        const log = _jReadLog();
+        if (!log.length) return _jEmptyBridge(sess);
+
+        const now = Date.now();
+        const distinct = {};
+        let deepest = ''; let deepestRank = -1;
+        for (let i = 0; i < log.length; i++) {
+            const e = log[i]; if (!e) continue;
+            distinct[e.path] = 1;
+            const r = _jDepthRank(e.page_type);
+            if (r > deepestRank) { deepestRank = r; deepest = e.page_type; }
+        }
+        const totalPv = readJSON('local', LS_TOTAL_KEY, log.length);
+        const firstEntered = log[0].entered_ts_ms;
+
+        return {
+            sw_uid:                   _jSwUid(),
+            journey:                  log,                              // bounded (≤RING_CAP), PII-free
+            page_count_total:         (typeof totalPv === 'number' && totalPv >= log.length) ? totalPv : log.length,
+            session_count:            (sess.session_number | 0) || 1,
+            distinct_paths:           Object.keys(distinct).length,
+            total_time_to_convert_ms: (firstEntered != null) ? (now - firstEntered) : null,
+            deepest_page_type:        deepest || (log[log.length - 1] ? log[log.length - 1].page_type : ''),
+            entry_page:               sess.entry_page || (log[0] ? log[0].path : ''),
+            entry_session_method:     sess.entry_method || ''
+        };
+    } catch (e) { return _jEmptyBridge(); }
+}
+
+function _jEmptyBridge(sess) {
+    sess = sess || {};
+    return {
+        sw_uid:                   _jSwUid(),
+        journey:                  [],
+        page_count_total:         0,
+        session_count:            (sess.session_number | 0) || 1,
+        distinct_paths:           0,
+        total_time_to_convert_ms: null,
+        deepest_page_type:        '',
+        entry_page:               sess.entry_page || '',
+        entry_session_method:     sess.entry_method || ''
+    };
+}
+
     // ====== sw-post-tagging ======
 // ============================================================================
 // sw-post-tagging.js — Heuristic blog-post classifier
@@ -2621,6 +2927,14 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
             try { featureSnapshot = deps.buildFeatureSnapshot(_propensityInput(captured, ctx, e, scorerDerived)); } catch (x) { featureSnapshot = null; }
         }
 
+        // ---- journey breadcrumb (WS-B Phase 2): read via the injected bridge.
+        // PII-free rollups + ordered array; fail-open to null (never throws).
+        var journey = null;
+        if (typeof deps.getJourneyForBridge === 'function') {
+            try { journey = deps.getJourneyForBridge(); } catch (x) { journey = null; }
+        }
+        var journeyArr = (journey && Array.isArray(journey.journey)) ? journey.journey : null;
+
         // ---- profileCompleteness: per-layer coverage flags for WS-E ---------
         var profileCompleteness = {
             acquisition: _getLocal(e, K.ftTrafficSource) != null,
@@ -2628,7 +2942,7 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
                          || primaryServiceInterest !== 'unassigned'
                          || primaryModality !== 'unassigned',
             propensity:  propensityScore != null,
-            breadcrumb:  false,   // Phase 2 (WS-B)
+            breadcrumb:  !!(journeyArr && journeyArr.length),   // WS-B Phase 2
             telemetry:   false,   // Phase 3 (WS-B)
             identity:    !!(pii.email || pii.name)
         };
@@ -2699,11 +3013,11 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
             distinctBlogsCount:      _distinctCount(e, K.cntBlogPosts),
             distinctModalitiesCount: _distinctCount(e, K.cntModalities),
             assessmentsCount:        _distinctCount(e, K.cntAssessments),
-            journeyPageCountTotal: null,  // Phase 2 (WS-B)
-            journeySessionCount: null,    // Phase 2 (WS-B)
-            journeyDistinctPaths: null,   // Phase 2 (WS-B)
-            deepestPageType: null,        // Phase 2 (WS-B)
-            timeToConvertMs: null,        // Phase 2 (WS-B)
+            journeyPageCountTotal: (journey && journey.page_count_total != null) ? journey.page_count_total : null,  // WS-B Phase 2
+            journeySessionCount:   (journey && journey.session_count != null) ? journey.session_count : null,        // WS-B Phase 2
+            journeyDistinctPaths:  (journey && journey.distinct_paths != null) ? journey.distinct_paths : null,      // WS-B Phase 2
+            deepestPageType:       (journey && journey.deepest_page_type) ? journey.deepest_page_type : null,        // WS-B Phase 2
+            timeToConvertMs:       (journey && journey.total_time_to_convert_ms != null) ? journey.total_time_to_convert_ms : null,  // WS-B Phase 2
 
             // ---- inference verdict (WS-C; ga4_allowed:false) ----
             primaryTopicCluster: primaryTopicCluster,
@@ -2743,7 +3057,7 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
                 dayOfWeek: blobDayOfWeek,
                 approxGeo: null,                 // Phase 3 (WS-F: coarse only)
                 likelyOrganicQuery: null,        // Phase 4 (WS-D)
-                journeyBreadcrumb: null,         // Phase 2 (WS-B)
+                journeyBreadcrumb: journeyArr,   // WS-B Phase 2
                 timeGapsBetweenPages: null,      // Phase 2 (WS-B)
                 revisits: null,                  // Phase 2 (WS-C)
                 crossSession: null,              // Phase 2 (WS-B)
@@ -3016,7 +3330,8 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
             profile = deps.assembleLeadProfile(captured, {
                 getOrCreateSwUid: deps.getOrCreateSwUid,
                 computePropensity: deps.computePropensity,
-                buildFeatureSnapshot: deps.buildFeatureSnapshot
+                buildFeatureSnapshot: deps.buildFeatureSnapshot,
+                getJourneyForBridge: deps.getJourneyForBridge
             }, deps.env);
         } catch (x) {
             // assembly failed — clear PII, do not POST a malformed row.
@@ -4276,7 +4591,8 @@ function initEmbedListener() {
                 assembleLeadProfile:  (window.SWLeadAssembler && window.SWLeadAssembler.assembleLeadProfile)
                                         ? window.SWLeadAssembler.assembleLeadProfile : null,
                 resolveLeadFields:    (window.SWLeadFields && window.SWLeadFields.resolveLeadFields)
-                                        ? window.SWLeadFields.resolveLeadFields : null
+                                        ? window.SWLeadFields.resolveLeadFields : null,
+                getJourneyForBridge:  (typeof getJourneyForBridge === 'function') ? getJourneyForBridge : null
             };
             window.__sw_lci_config = {
                 INGEST_URL: 'https://us-central1-scienceworks-mcp.cloudfunctions.net/lci-lead-ingest',   // <-- HQ sets the real endpoint at deploy
@@ -4334,6 +4650,30 @@ function initEmbedListener() {
         let blogAttrs = {};
         if (pageType === 'blog_post') {
             try { blogAttrs = extractBlogContext(normalizedPath); } catch (e) { /* leave blank */ }
+        }
+
+        // -- WS-B Phase 2: journey breadcrumb — append a stub entry on page entry.
+        // taxCtx = the taxonomy label for the current page, else ''. initEntry
+        // self-finalizes any open prior entry (SPA safety) and never throws.
+        var _swTaxCtx = (pageType === 'service' && serviceAttrs.service_name) ? serviceAttrs.service_name
+                      : (pageType === 'clinician' && clinicianAttrs.clinician_name) ? clinicianAttrs.clinician_name
+                      : (pageType === 'assessment_tool' && assessmentAttrs.assessment_name) ? assessmentAttrs.assessment_name
+                      : (pageType === 'info_landing' && infoAttrs.info_topic) ? infoAttrs.info_topic
+                      : '';
+        try { initEntry({ path: normalizedPath, pageType: pageType, taxCtx: _swTaxCtx }); } catch (e) { /* non-fatal */ }
+
+        // -- WS-B Phase 2: wire journey exit-flush ONCE per page load (mirrors the
+        // sw-forms abandonment triple hook). visibilitychange->hidden = primary
+        // (mobile/bfcache), pagehide = backstop, sw:navigate = SPA-exit. Idempotent.
+        if (!window.__sw_journey_flush_wired) {
+            window.__sw_journey_flush_wired = true;
+            try {
+                document.addEventListener('visibilitychange', function () {
+                    if (document.visibilityState === 'hidden') { try { finalizeEntry(); } catch (e) {} }
+                });
+                window.addEventListener('pagehide',   function () { try { finalizeEntry(); } catch (e) {} });
+                window.addEventListener('sw:navigate', function () { try { finalizeEntry(); } catch (e) {} });
+            } catch (e) { /* non-fatal */ }
         }
 
         // -- LCI C2-parent (BW1-C): wire the scoring write-path (W0-1 DORMANT) -
