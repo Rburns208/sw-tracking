@@ -198,6 +198,18 @@ const CLINICIAN_BY_PATH = {
         clinician_specialties: ['trauma_ptsd', 'couples_relationship_issues', 'family_parenting_dynamics', 'anxiety', 'adhd', 'autism', 'executive_function'],
         clinician_takes_insurance: false,
         clinician_accepting_new: true
+    },
+    // Added 2026-07-07 from the confirmed team roster (memory/people/team-roster.md).
+    // Abigail is replacing Catherine Cavin (departing soon) and shares Catherine's
+    // form instance d0a38253 (see FORM_NAME_BY_ID transition note).
+    '/abigail-jones': {
+        clinician_name: 'abigail_jones',
+        clinician_role: 'therapist',
+        clinician_specialty_primary: 'trauma',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['ocd', 'trauma_ptsd', 'anxiety', 'adhd', 'autism', 'audhd', 'insomnia_sleep', 'chronic_illness', 'executive_function'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
     }
 };
 
@@ -291,7 +303,12 @@ const FORM_NAME_BY_ID = {
     // Clinician profile forms — one per clinician page
     '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'clinician_kiesa_kelly',          // /psychological-assessments + /kiesakelly
     'e522454a-a18f-40e6-a532-aebe5daed5ea': 'clinician_laura_travers_heinig', // /laura-travers-heinig
-    'd0a38253-f880-402f-8487-ee52282b757d': 'clinician_catherine_cavin',      // /catherinecavin
+    // 2026-07-07: this shared Wix form instance is reassigned Catherine -> Abigail
+    // (Abigail is replacing Catherine, who is departing soon). /catherinecavin AND
+    // /abigail-jones render this SAME form UUID. Lead clinician attribution is
+    // page-path based (CLINICIAN_BY_PATH -> clinicianAtSubmit), so both pages
+    // attribute correctly; only form_name follows the UUID to Abigail in transition.
+    'd0a38253-f880-402f-8487-ee52282b757d': 'clinician_abigail_jones',       // /abigail-jones (+ /catherinecavin, shared instance)
     // 2026-07-03: this shared Wix form instance is reassigned Kathryn -> Bailey
     // (Bailey is replacing Kathryn). /kathryn-wood AND /bailey-basham render this
     // SAME form UUID. Lead clinician attribution is page-path based
@@ -339,7 +356,8 @@ const FORM_META = {
     clinician_kathryn_wood:        { form_type: 'clinician_contact', lead_value_estimate: 250 }, // historical: shared UUID reassigned to Bailey 2026-07-03 (retained for prior leads)
     clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_hannah_pollok:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_bailey_basham:       { form_type: 'clinician_contact', lead_value_estimate: 250 }
+    clinician_bailey_basham:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_abigail_jones:       { form_type: 'clinician_contact', lead_value_estimate: 250 }
 };
 
 // --------------------------------------------------------------------------
