@@ -765,6 +765,10 @@ function __sw_getScrollAtClickPercent() {
     } catch (e) { return 0; }
 }
 
+// WS-B Phase 3 (T-4): shared exported helper so sw-scroll.js (and others) can
+// reuse the click-time scroll-% math. No behavior change to the private caller.
+function getScrollAtClickPercent() { return __sw_getScrollAtClickPercent(); }
+
 function __sw_getTimeOnPageSeconds() {
     if (!__sw_page_ready_ts) return 0;
     return Math.floor((Date.now() - __sw_page_ready_ts) / 1000);
@@ -1247,12 +1251,19 @@ function finalizeEntry() {
     try {
         const now = Date.now();
 
+        // WS-B Phase 3: snapshot per-page enrichment ONCE at exit (null-safe,
+        // typeof-guarded so sw-journey stays standalone-safe when Phase 3 absent).
+        var _swDwell  = (typeof getDwellMs === 'function')      ? (function () { try { return getDwellMs(now); } catch (e) { return null; } })() : null;
+        var _swScroll = (typeof getScrollResult === 'function') ? (function () { try { return getScrollResult();  } catch (e) { return null; } })() : null;
+
         const log = _jReadLog();
         const li = _jFindIdxBySeq(log, _jLiveSeq);
         if (li >= 0) {
             const entered = log[li].entered_ts_ms;
             log[li].exited_ts_ms = now;
             log[li].elapsed_ms   = (entered != null) ? (now - entered) : null;
+            if (_swDwell != null) log[li].engaged_dwell_ms = _swDwell;
+            if (_swScroll) log[li].scroll = _swScroll;
             _jPersistLog(log);
         }
 
@@ -1262,6 +1273,8 @@ function finalizeEntry() {
             const entered = sarr[si].entered_ts_ms;
             sarr[si].exited_ts_ms = now;
             sarr[si].elapsed_ms   = (entered != null) ? (now - entered) : null;
+            if (_swDwell != null) sarr[si].engaged_dwell_ms = _swDwell;
+            if (_swScroll) sarr[si].scroll = _swScroll;
             _jPersistSess(sarr);
         }
         // Keep _jLiveSeq so a later hidden re-finalizes in place; initEntry()
@@ -1321,6 +1334,219 @@ function _jEmptyBridge(sess) {
         entry_page:               sess.entry_page || '',
         entry_session_method:     sess.entry_method || ''
     };
+}
+
+    // ====== sw-dwell ======
+// ============================================================================
+// sw-dwell.js - WS-B Phase 3: focus/idle-aware engaged-dwell accumulator
+// ============================================================================
+// Active dwell = wall-clock accrued ONLY while the page is visible AND the user
+// is not idle. Idle = no scroll/mousemove/keydown/touchstart/click for IDLE_MS
+// (default 30s; SPEC 4.1 / Q3 calibration spike deferred). Engaged time is
+// credited up to (lastActivity + IDLE_MS), so short reading pauses (<30s) still
+// count but an untouched page is capped at one idle window.
+//
+// createDwellCore() is a DOM-FREE, deterministic state machine driven by
+// explicit timestamps -> unit-testable in node. initDwell()/getDwellMs() are the
+// thin browser shell: bind listeners ONCE, reset the accumulator per page.
+// getDwellMs() is a NON-MUTATING snapshot read, so sw-journey.finalizeEntry()
+// can pull it at page exit regardless of listener firing order.
+//
+// PII-free (timings only; never name/email/message). Storage-first: this module
+// never pushes to GA4. Gated behind the SAME capture-enable flag as the R1
+// journey breadcrumb (window.__SW_JOURNEY_ENABLED); no-ops when capture is off.
+// ============================================================================
+
+var SW_DWELL_IDLE_MS = 30000;   // SPEC 4.1 default idle threshold
+
+// ---- pure, DOM-free core (unit-testable) ----------------------------------
+function createDwellCore(idleMs) {
+    idleMs = (typeof idleMs === 'number' && idleMs > 0) ? idleMs : SW_DWELL_IDLE_MS;
+    var accum = 0;            // total engaged ms banked
+    var activeStart = null;   // ts current engaged run began, or null if paused
+    var lastActivity = 0;     // ts of last activity / becoming-visible
+    var visible = true;
+
+    function cap(ts) { return Math.min(ts, lastActivity + idleMs); }   // idle ceiling
+    function closeRun(atTs) {
+        if (activeStart != null) {
+            var end = cap(atTs);
+            if (end > activeStart) accum += (end - activeStart);
+            activeStart = null;
+        }
+    }
+    return {
+        onVisible:  function (ts) { visible = true; lastActivity = ts; if (activeStart == null) activeStart = ts; },
+        onHidden:   function (ts) { closeRun(ts); visible = false; },
+        onActivity: function (ts) { lastActivity = ts; if (visible && activeStart == null) activeStart = ts; },
+        onIdle:     function ()   { closeRun(lastActivity + idleMs); },   // idle fires idleMs after lastActivity
+        value: function (now) {
+            var live = 0;
+            if (activeStart != null) { var end = cap(now); if (end > activeStart) live = end - activeStart; }
+            return Math.round(accum + live);
+        },
+        _state: function () { return { accum: accum, activeStart: activeStart, lastActivity: lastActivity, visible: visible, idleMs: idleMs }; }
+    };
+}
+
+// ---- browser shell --------------------------------------------------------
+var _swDwellCore = null;
+var _swDwellIdleTimer = null;
+var _swDwellWired = false;
+
+function _swDwellEnabled() {
+    try { return (typeof window === 'undefined') ? false : (window.__SW_JOURNEY_ENABLED !== false); }
+    catch (e) { return false; }
+}
+function _swDwellActivity() {
+    if (!_swDwellCore) return;
+    _swDwellCore.onActivity(Date.now());
+    if (_swDwellIdleTimer) { clearTimeout(_swDwellIdleTimer); }
+    _swDwellIdleTimer = setTimeout(function () { if (_swDwellCore) _swDwellCore.onIdle(); }, SW_DWELL_IDLE_MS);
+}
+
+function initDwell() {
+    if (!_swDwellEnabled()) return;
+    try {
+        _swDwellCore = createDwellCore(SW_DWELL_IDLE_MS);   // fresh accumulator per page
+        var now = Date.now();
+        var vis = (typeof document !== 'undefined' && document.visibilityState)
+                  ? (document.visibilityState === 'visible') : true;
+        if (vis) _swDwellCore.onVisible(now); else _swDwellCore.onHidden(now);
+
+        if (!_swDwellWired) {   // bind listeners ONCE; they act on the current _swDwellCore
+            _swDwellWired = true;
+            if (typeof document !== 'undefined') {
+                document.addEventListener('visibilitychange', function () {
+                    if (!_swDwellCore) return;
+                    if (document.visibilityState === 'hidden') _swDwellCore.onHidden(Date.now());
+                    else _swDwellCore.onVisible(Date.now());
+                });
+            }
+            if (typeof window !== 'undefined') {
+                window.addEventListener('blur',  function () { if (_swDwellCore) _swDwellCore.onHidden(Date.now()); });
+                window.addEventListener('focus', function () { if (_swDwellCore) _swDwellCore.onVisible(Date.now()); });
+                var ev = ['scroll', 'mousemove', 'keydown', 'touchstart', 'click'];
+                for (var i = 0; i < ev.length; i++) {
+                    try { window.addEventListener(ev[i], _swDwellActivity, { passive: true }); }
+                    catch (e2) { window.addEventListener(ev[i], _swDwellActivity, false); }
+                }
+            }
+        }
+        _swDwellActivity();   // arm the idle timer for this page
+    } catch (e) { _swDwellCore = null; }
+}
+
+// Non-mutating snapshot read (safe to call repeatedly; pulled by finalizeEntry).
+function getDwellMs(now) {
+    try { return _swDwellCore ? _swDwellCore.value(typeof now === 'number' ? now : Date.now()) : null; }
+    catch (e) { return null; }
+}
+
+    // ====== sw-scroll ======
+// ============================================================================
+// sw-scroll.js - WS-B Phase 3: scroll-depth + milestone tracker
+// ============================================================================
+// Signals per page (SPEC 4.2): max_pct (high-water mark), milestone first-cross
+// timestamps m25/m50/m75/m100_ts (ms-since-entry), resting_pct (position at
+// exit). Single passive, rAF-coalesced scroll listener. docHeight is RECOMPUTED
+// on every sample so Wix lazy-hydration growth (Q7 / scrollHeight instability)
+// can't lock in a stale percentage.
+//
+// createScrollCore()/scrollPercent() are DOM-FREE -> unit-testable. initScroll()/
+// getScrollResult() are the browser shell: bind ONCE, reset per page.
+// getScrollResult() samples the current position then returns the result, so the
+// resting_pct reflects the exit position when finalizeEntry() pulls it.
+//
+// PII-free; storage-first (never GA4). Gated behind the same capture-enable flag
+// as the R1 journey breadcrumb (window.__SW_JOURNEY_ENABLED).
+// ============================================================================
+
+// ---- pure, DOM-free helpers (unit-testable) -------------------------------
+function scrollPercent(scrollY, viewportH, docHeightFull) {
+    var scrollable = (docHeightFull || 0) - (viewportH || 0);
+    if (scrollable <= 0) return 100;   // page fits within viewport -> fully seen
+    var pct = Math.round((scrollY / scrollable) * 100);
+    return Math.min(100, Math.max(0, pct));
+}
+
+function createScrollCore(enteredTsMs) {
+    var entered = (typeof enteredTsMs === 'number') ? enteredTsMs : 0;
+    var maxPct = 0;
+    var m = { m25_ts: null, m50_ts: null, m75_ts: null, m100_ts: null };
+    var restingPct = 0;
+    function mark(pct, now) {
+        var ms = Math.max(0, now - entered);
+        if (pct >= 25  && m.m25_ts  == null) m.m25_ts  = ms;
+        if (pct >= 50  && m.m50_ts  == null) m.m50_ts  = ms;
+        if (pct >= 75  && m.m75_ts  == null) m.m75_ts  = ms;
+        if (pct >= 100 && m.m100_ts == null) m.m100_ts = ms;
+    }
+    return {
+        sample: function (scrollY, viewportH, docHeightFull, now) {
+            var pct = scrollPercent(scrollY, viewportH, docHeightFull);
+            if (pct > maxPct) maxPct = pct;
+            restingPct = pct;
+            mark(pct, now);
+            return pct;
+        },
+        result: function () {
+            return { max_pct: maxPct, m25_ts: m.m25_ts, m50_ts: m.m50_ts,
+                     m75_ts: m.m75_ts, m100_ts: m.m100_ts, resting_pct: restingPct };
+        }
+    };
+}
+
+// ---- browser shell --------------------------------------------------------
+var _swScrollCore = null;
+var _swScrollThrottle = false;
+var _swScrollWired = false;
+
+function _swScrollEnabled() {
+    try { return (typeof window === 'undefined') ? false : (window.__SW_JOURNEY_ENABLED !== false); }
+    catch (e) { return false; }
+}
+function _swDocHeight() {
+    try {
+        var b = (typeof document !== 'undefined' && document.body) ? document.body.scrollHeight : 0;
+        var d = (typeof document !== 'undefined' && document.documentElement) ? document.documentElement.scrollHeight : 0;
+        return Math.max(b, d);
+    } catch (e) { return 0; }
+}
+function _swScrollSampleNow() {
+    if (!_swScrollCore || typeof window === 'undefined') return;
+    try {
+        var y = (typeof window.scrollY === 'number') ? window.scrollY
+              : (typeof window.pageYOffset === 'number') ? window.pageYOffset : 0;
+        _swScrollCore.sample(y, window.innerHeight || 0, _swDocHeight(), Date.now());
+    } catch (e) {}
+}
+
+function initScroll() {
+    if (!_swScrollEnabled()) return;
+    try {
+        _swScrollCore = createScrollCore(Date.now());   // fresh tracker per page
+        _swScrollSampleNow();                           // capture entry position
+        if (!_swScrollWired && typeof window !== 'undefined') {
+            _swScrollWired = true;
+            var handler = function () {
+                if (_swScrollThrottle) return;
+                _swScrollThrottle = true;
+                var raf = (typeof window.requestAnimationFrame === 'function')
+                          ? window.requestAnimationFrame
+                          : function (cb) { return setTimeout(cb, 250); };
+                raf(function () { _swScrollSampleNow(); _swScrollThrottle = false; });
+            };
+            try { window.addEventListener('scroll', handler, { passive: true }); }
+            catch (e2) { window.addEventListener('scroll', handler, false); }
+        }
+    } catch (e) { _swScrollCore = null; }
+}
+
+// Non-mutating-intent snapshot: sample the current (exit) position then report.
+function getScrollResult() {
+    try { if (!_swScrollCore) return null; _swScrollSampleNow(); return _swScrollCore.result(); }
+    catch (e) { return null; }
 }
 
     // ====== sw-post-tagging ======
@@ -2961,7 +3187,9 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
                          || primaryModality !== 'unassigned',
             propensity:  propensityScore != null,
             breadcrumb:  !!(journeyArr && journeyArr.length),   // WS-B Phase 2
-            telemetry:   false,   // Phase 3 (WS-B)
+            telemetry:   !!(journeyArr && journeyArr.some(function (en) {   // WS-B Phase 3
+                             return en && (en.engaged_dwell_ms != null || en.scroll != null);
+                         })),
             identity:    !!(pii.email || pii.name)
         };
 
@@ -4679,6 +4907,13 @@ function initEmbedListener() {
                       : (pageType === 'info_landing' && infoAttrs.info_topic) ? infoAttrs.info_topic
                       : '';
         try { initEntry({ path: normalizedPath, pageType: pageType, taxCtx: _swTaxCtx }); } catch (e) { /* non-fatal */ }
+
+        // -- WS-B Phase 3: start per-page engaged-dwell + scroll accumulators.
+        // Gated behind the same capture-enable flag as the breadcrumb; reset per
+        // page, listeners bound once. finalizeEntry() reads them at exit. typeof-
+        // guarded so a Phase-2-only bundle stays safe if these modules are absent.
+        try { if (typeof initDwell === 'function') initDwell(); } catch (e) { /* non-fatal */ }
+        try { if (typeof initScroll === 'function') initScroll(); } catch (e) { /* non-fatal */ }
 
         // -- WS-B Phase 2: wire journey exit-flush ONCE per page load (mirrors the
         // sw-forms abandonment triple hook). visibilitychange->hidden = primary
