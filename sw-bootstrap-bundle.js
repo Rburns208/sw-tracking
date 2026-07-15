@@ -217,8 +217,8 @@ const CLINICIAN_BY_PATH = {
 // Assessment-tool landing pages
 // --------------------------------------------------------------------------
 const ASSESSMENT_BY_PATH = {
-    '/y-bocs': {
-        assessment_name: 'y_bocs',
+    '/docs': {
+        assessment_name: 'docs',
         assessment_category: 'ocd',
         assessment_age_range: 'adult',
         assessment_self_scoring: true
@@ -250,6 +250,38 @@ const ASSESSMENT_BY_PATH = {
     '/gad-7': {
         assessment_name: 'gad_7',
         assessment_category: 'anxiety',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    // Restored 2026-07-14 (screeners regressed to 6 in the LCI rebuild from the
+    // pre-LCI 11-screener config; exact values cloned from the Apr-27 built bundle).
+    '/promis-29': {
+        assessment_name: 'promis_29',
+        assessment_category: 'general_health',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/raads-14': {
+        assessment_name: 'raads_14',
+        assessment_category: 'autism',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/abo': {
+        assessment_name: 'abo',
+        assessment_category: 'autism',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/cat-q': {
+        assessment_name: 'cat_q',
+        assessment_category: 'autism',
+        assessment_age_range: 'adult',
+        assessment_self_scoring: true
+    },
+    '/pcl-5': {
+        assessment_name: 'pcl_5',
+        assessment_category: 'trauma_ptsd',
         assessment_age_range: 'adult',
         assessment_self_scoring: true
     }
