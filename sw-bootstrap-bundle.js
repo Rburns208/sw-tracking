@@ -1287,6 +1287,7 @@ function finalizeEntry() {
         // typeof-guarded so sw-journey stays standalone-safe when Phase 3 absent).
         var _swDwell  = (typeof getDwellMs === 'function')      ? (function () { try { return getDwellMs(now); } catch (e) { return null; } })() : null;
         var _swScroll = (typeof getScrollResult === 'function') ? (function () { try { return getScrollResult();  } catch (e) { return null; } })() : null;
+        var _swSections = (typeof getAttentionResult === 'function') ? (function () { try { return getAttentionResult(now); } catch (e) { return null; } })() : null;   // WS-B Phase 3b
 
         const log = _jReadLog();
         const li = _jFindIdxBySeq(log, _jLiveSeq);
@@ -1296,6 +1297,7 @@ function finalizeEntry() {
             log[li].elapsed_ms   = (entered != null) ? (now - entered) : null;
             if (_swDwell != null) log[li].engaged_dwell_ms = _swDwell;
             if (_swScroll) log[li].scroll = _swScroll;
+            if (_swSections) log[li].sections = _swSections;
             _jPersistLog(log);
         }
 
@@ -1307,6 +1309,7 @@ function finalizeEntry() {
             sarr[si].elapsed_ms   = (entered != null) ? (now - entered) : null;
             if (_swDwell != null) sarr[si].engaged_dwell_ms = _swDwell;
             if (_swScroll) sarr[si].scroll = _swScroll;
+            if (_swSections) sarr[si].sections = _swSections;
             _jPersistSess(sarr);
         }
         // Keep _jLiveSeq so a later hidden re-finalizes in place; initEntry()
@@ -1578,6 +1581,401 @@ function initScroll() {
 // Non-mutating-intent snapshot: sample the current (exit) position then report.
 function getScrollResult() {
     try { if (!_swScrollCore) return null; _swScrollSampleNow(); return _swScrollCore.result(); }
+    catch (e) { return null; }
+}
+
+    // ====== sw-sections-map ======
+// ============================================================================
+// sw-sections-map.js - WS-B Phase 3b: versioned section-definition map (Path C)
+// ============================================================================
+// The section-definition SOURCE for sw-attention.js. Path C (config-map): section
+// definitions live HERE, in the version-controlled bundle, NOT as data-sw-section
+// attributes in the Wix editor (which Dev-Mode-disabled Wix cannot expose -- the
+// same WDE0027 constraint that forced the Firestore pivot). Maintained + reviewed
+// + shipped down the existing rule-9 re-pin path like any other bundle change.
+//
+// A "section" = a NEUTRAL region label (pricing / insurance / symptoms / ...) plus
+// a keyword rule matched against the page's h2/h3 heading text at runtime. Labels
+// are neutral by construction -- NEVER a diagnosis, NEVER PII (no 'has_ocd'; use
+// 'symptoms'). The label taxonomy is centralized in LABEL_RULES so every template
+// family draws from the same reviewed vocabulary.
+//
+// Coverage: all meaningful template families (homepage, /info dynamic template,
+// blog-post template, service pages, clinician pages, contact, screener pages).
+// Any page not matched here falls back to Path-B heuristic auto-sectioning
+// (partition by h2/h3), so no page yields zero section data.
+//
+// DOM-free data + pure resolvers -> unit-testable. No IntersectionObserver here;
+// sw-attention.js owns the browser wiring.
+// ============================================================================
+
+// Centralized NEUTRAL label taxonomy: label -> heading-text keyword triggers
+// (lowercased substring match). Add/adjust vocabulary HERE; keep labels neutral.
+var SW_LABEL_RULES = {
+    pricing:     ['cost', 'price', 'pricing', 'fee', 'how much', 'payment', 'out-of-pocket', 'out of pocket', 'self-pay', 'self pay', 'rates', 'affordab'],
+    insurance:   ['insurance', 'coverage', 'in-network', 'in network', 'out-of-network', 'superbill', 'reimburs', 'benefits'],
+    symptoms:    ['symptom', 'signs', 'what is', 'do i have', 'criteria', 'traits', 'presentation', 'experience'],
+    process:     ['what to expect', 'process', 'how it works', 'how does', 'steps', 'timeline', 'what happens', 'appointment', 'booking', 'schedule', 'getting started', 'first visit'],
+    services:    ['services', 'what we offer', 'assessment', 'evaluation', 'therapy', 'coaching', 'testing', 'diagnos', 'treatment', 'our approach'],
+    credentials: ['about', 'our team', 'meet', 'clinician', 'qualif', 'license', 'credential', 'experience', 'background', 'who we are'],
+    faq:         ['faq', 'frequently asked', 'common questions', 'questions'],
+    results:     ['results', 'your score', 'scoring', 'what your', 'interpret', 'next steps'],
+    geo:         ['tennessee', 'nashville', 'near you', 'near me', 'location', 'in-person', 'telehealth', 'area', 'serving'],
+    cta:         ['get started', 'contact', 'book', 'reach out', 'ready', 'schedule a', 'request', 'call us']
+};
+
+// Per-template ORDERED label lists (path-pattern -> [labels]). The resolver walks
+// PATH_RULES top-to-bottom; the first matching rule wins. `test` is a predicate
+// over the normalized path. Clinician pages are matched by a slug set injected at
+// resolve time (see resolveSectionsForPath).
+var SW_SECTION_TEMPLATES = {
+    home:      ['services', 'process', 'credentials', 'pricing', 'cta'],
+    contact:   ['pricing', 'insurance', 'process', 'cta'],
+    service:   ['services', 'process', 'pricing', 'insurance', 'faq', 'cta'],
+    blog:      ['symptoms', 'process', 'services', 'pricing', 'insurance', 'faq', 'cta'],
+    info:      ['services', 'symptoms', 'process', 'pricing', 'insurance', 'geo', 'faq', 'cta'],
+    clinician: ['credentials', 'services', 'process', 'cta'],
+    screener:  ['symptoms', 'results', 'services', 'cta']
+};
+
+// Known service-page path prefixes (extend as the site grows).
+var SW_SERVICE_PATHS = [
+    '/psychological-assessments', '/therapy', '/executive-function-coaching',
+    '/mental-health-screening', '/assessments', '/services'
+];
+
+// Known screener page paths (mirror ASSESSMENT_BY_PATH in sw-taxonomies.js).
+var SW_SCREENER_PATHS = [
+    '/docs', '/promis-29', '/pcl-5', '/raads-14', '/abo', '/cat-q',
+    '/asrs', '/gad-7', '/phq-9', '/audit', '/dast-10'
+];
+
+function normSectionPath(p) {
+    if (!p || typeof p !== 'string') return '/';
+    p = p.split('?')[0].split('#')[0].trim().toLowerCase();
+    if (p.length > 1) p = p.replace(/\/+$/, '');
+    return p || '/';
+}
+
+// Resolve the ordered section label list for a page path (Path C). Returns
+// { template, labels } or null when the path is unmapped (-> Path-B fallback).
+// clinicianPaths: optional array/set of known clinician slugs (from sw-taxonomies
+// CLINICIAN_BY_PATH) so clinician bio pages route to the clinician template.
+function resolveSectionsForPath(path, clinicianPaths) {
+    var p = normSectionPath(path);
+    var tmpl = null;
+    if (p === '/' || p === '/home') tmpl = 'home';
+    else if (p === '/contact') tmpl = 'contact';
+    else if (p.indexOf('/post/') === 0) tmpl = 'blog';
+    else if (p.indexOf('/info/') === 0) tmpl = 'info';
+    else if (_inList(p, SW_SCREENER_PATHS)) tmpl = 'screener';
+    else if (_prefix(p, SW_SERVICE_PATHS)) tmpl = 'service';
+    else if (_isClinician(p, clinicianPaths)) tmpl = 'clinician';
+    if (!tmpl) return null;
+    return { template: tmpl, labels: SW_SECTION_TEMPLATES[tmpl].slice() };
+}
+
+function _inList(p, list) { for (var i = 0; i < list.length; i++) if (list[i] === p) return true; return false; }
+function _prefix(p, list) { for (var i = 0; i < list.length; i++) if (p === list[i] || p.indexOf(list[i] + '/') === 0) return true; return false; }
+function _isClinician(p, clinicianPaths) {
+    if (!clinicianPaths) return false;
+    try {
+        if (typeof clinicianPaths.indexOf === 'function') return clinicianPaths.indexOf(p) >= 0;
+        if (clinicianPaths[p] !== undefined) return true;   // object/map
+    } catch (e) {}
+    return false;
+}
+
+// Given a label and a heading text, does the heading trigger this label? (pure)
+function labelMatchesHeading(label, headingText) {
+    var kws = SW_LABEL_RULES[label];
+    if (!kws || !headingText) return false;
+    var t = String(headingText).toLowerCase();
+    for (var i = 0; i < kws.length; i++) if (t.indexOf(kws[i]) >= 0) return true;
+    return false;
+}
+
+// Path-B fallback: derive neutral-ish section labels straight from an ordered list
+// of heading texts (used when resolveSectionsForPath returns null OR a mapped label
+// finds no heading). Each heading becomes a section; its label is the best-matching
+// taxonomy label, else a slugified heading (still text-only, PII-free). (pure)
+function autoSectionsFromHeadings(headingTexts) {
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < (headingTexts || []).length; i++) {
+        var h = headingTexts[i];
+        if (!h) continue;
+        var label = null;
+        for (var lab in SW_LABEL_RULES) {
+            if (SW_LABEL_RULES.hasOwnProperty(lab) && labelMatchesHeading(lab, h)) { label = lab; break; }
+        }
+        if (!label) label = _slugLabel(h);
+        if (!label || seen[label]) continue;   // de-dup labels within a page
+        seen[label] = true;
+        out.push({ label: label, headingText: h });
+    }
+    return out;
+}
+
+function _slugLabel(h) {
+    return String(h).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+}
+
+    // ====== sw-attention ======
+// ============================================================================
+// sw-attention.js - WS-B Phase 3b: per-section engaged-attention accumulator
+// ============================================================================
+// Fills the third/last Phase-3 breadcrumb slot (`sections`): how much ENGAGED,
+// VISIBLE, non-idle time the user spent on each NEUTRAL region of a page (pricing
+// / insurance / symptoms / ...). The most health-inferential WS-B signal, so
+// capture is section LABELS + timings/percentages ONLY -- never text, never a
+// diagnosis, never PII. Section labels come from the versioned Path-C config-map
+// (sw-sections-map.js), NOT Wix-editor data-sw-section attributes.
+//
+// createAttentionCore() is a DOM-FREE, deterministic, timestamp-driven state
+// machine -> unit-testable in node (mirrors createDwellCore / createScrollCore).
+// Attribution is WINNER-TAKE-ALL: at any instant only the single most-visible
+// section accrues engaged time, so per-section times never double-count and sum
+// to <= engaged page time. Focus/idle discipline is the dwell core's (engaged
+// time credited only while visible AND not idle, capped at lastActivity+idleMs).
+//
+// initAttention()/getAttentionResult() are the thin browser shell: resolve the
+// page's sections (Path C map, Path-B heading fallback), wire ONE Intersection
+// Observer, feed the core. getAttentionResult() is a NON-MUTATING snapshot so
+// sw-journey.finalizeEntry() can pull it at exit order-independently. PII-free;
+// storage-first (zero GA4/dataLayer); gated behind window.__SW_JOURNEY_ENABLED.
+// ============================================================================
+
+var SW_ATTN_IDLE_MS = 30000;   // mirror sw-dwell idle threshold (SPEC 4.1)
+var SW_ATTN_ENTER_PCT = 25;    // visibility % that counts as "entered" a section
+var SW_ATTN_MIN_ACCRUE_PCT = 1;// any visibility qualifies a section as accrual winner
+
+// ---- pure, DOM-free core (unit-testable) ----------------------------------
+function createAttentionCore(idleMs, enterPct) {
+    idleMs   = (typeof idleMs === 'number' && idleMs > 0) ? idleMs : SW_ATTN_IDLE_MS;
+    enterPct = (typeof enterPct === 'number' && enterPct >= 0) ? enterPct : SW_ATTN_ENTER_PCT;
+    var secs = {};            // label -> {engaged, maxPct, firstSeen, entered, curPct, order}
+    var order = 0;
+    var activeLabel = null;
+    var activeStart = null;   // ts current engaged run began (for activeLabel), or null
+    var lastActivity = 0;
+    var visible = true;
+
+    function cap(ts) { return Math.min(ts, lastActivity + idleMs); }
+    function ensure(label) {
+        if (!secs[label]) secs[label] = { engaged: 0, maxPct: 0, firstSeen: null, entered: 0, curPct: 0, order: order++ };
+        return secs[label];
+    }
+    function closeActive(atTs) {
+        if (activeLabel != null && activeStart != null) {
+            var end = cap(atTs);
+            if (end > activeStart) secs[activeLabel].engaged += (end - activeStart);
+            activeStart = null;
+        }
+    }
+    function winner() {   // most-visible section (>= min accrue), tie -> DOM order
+        var best = null, bestPct = SW_ATTN_MIN_ACCRUE_PCT - 1, bestOrder = Infinity;
+        for (var l in secs) {
+            if (!secs.hasOwnProperty(l)) continue;
+            var s = secs[l];
+            if (s.curPct >= SW_ATTN_MIN_ACCRUE_PCT &&
+                (s.curPct > bestPct || (s.curPct === bestPct && s.order < bestOrder))) {
+                best = l; bestPct = s.curPct; bestOrder = s.order;
+            }
+        }
+        return best;
+    }
+    function recompute(ts) {
+        var w = winner();
+        if (w !== activeLabel) {
+            closeActive(ts);
+            activeLabel = w;
+            activeStart = (w != null && visible) ? ts : null;
+        }
+    }
+    return {
+        onSectionVisibility: function (label, pct, ts) {
+            if (!label) return;
+            pct = Math.min(100, Math.max(0, pct || 0));
+            var s = ensure(label);
+            if (pct >= enterPct && s.curPct < enterPct) {           // entering
+                s.entered += 1;
+                if (s.firstSeen == null) s.firstSeen = ts;
+            }
+            if (pct > s.maxPct) s.maxPct = pct;
+            s.curPct = pct;
+            lastActivity = ts;                                       // IO fire = activity
+            recompute(ts);
+        },
+        onVisible:  function (ts) { visible = true; lastActivity = ts; if (activeLabel != null && activeStart == null) activeStart = ts; },
+        onHidden:   function (ts) { closeActive(ts); visible = false; },
+        onActivity: function (ts) { lastActivity = ts; if (visible && activeLabel != null && activeStart == null) activeStart = ts; },
+        onIdle:     function ()   { closeActive(lastActivity + idleMs); },
+        value: function (now) {
+            var arr = [];
+            for (var l in secs) {
+                if (!secs.hasOwnProperty(l)) continue;
+                var s = secs[l];
+                var eng = s.engaged;
+                if (l === activeLabel && activeStart != null) {     // add live run (non-mutating)
+                    var end = cap(now);
+                    if (end > activeStart) eng += (end - activeStart);
+                }
+                arr.push({ label: l, engaged_dwell_ms: Math.round(eng), max_visible_pct: s.maxPct,
+                           first_seen_ts: s.firstSeen, entered_count: s.entered, _order: s.order });
+            }
+            arr.sort(function (a, b) { return (b.engaged_dwell_ms - a.engaged_dwell_ms) || (a._order - b._order); });
+            var top = null, topEng = -1, deep = null, deepTs = -1;
+            for (var i = 0; i < arr.length; i++) {
+                if (arr[i].engaged_dwell_ms > topEng) { topEng = arr[i].engaged_dwell_ms; top = arr[i].label; }
+                if (arr[i].first_seen_ts != null && arr[i].first_seen_ts > deepTs) { deepTs = arr[i].first_seen_ts; deep = arr[i].label; }
+                delete arr[i]._order;
+            }
+            return { sections: arr, topSection: top, deepestSection: deep };
+        },
+        _state: function () { return { secs: secs, activeLabel: activeLabel, activeStart: activeStart, lastActivity: lastActivity, visible: visible }; }
+    };
+}
+
+// ---- browser shell --------------------------------------------------------
+var _swAttnCore = null;
+var _swAttnObserver = null;
+var _swAttnIdleTimer = null;
+var _swAttnWired = false;
+
+function _swAttnEnabled() {
+    try { return (typeof window === 'undefined') ? false : (window.__SW_JOURNEY_ENABLED !== false); }
+    catch (e) { return false; }
+}
+function _swAttnActivity() {
+    if (!_swAttnCore) return;
+    _swAttnCore.onActivity(Date.now());
+    if (_swAttnIdleTimer) clearTimeout(_swAttnIdleTimer);
+    _swAttnIdleTimer = setTimeout(function () { if (_swAttnCore) _swAttnCore.onIdle(); }, SW_ATTN_IDLE_MS);
+}
+function _swAttnHeadings() {
+    try {
+        var nodes = document.querySelectorAll('h1, h2, h3');
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var t = (nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
+            if (t) out.push({ el: nodes[i], text: t });
+        }
+        return out;
+    } catch (e) { return []; }
+}
+// Walk up to a reasonable section container for a heading (bounded), else the heading.
+function _swAttnContainer(el) {
+    try {
+        var cur = el, hops = 0;
+        while (cur && cur.parentElement && hops < 4) {
+            var tag = (cur.parentElement.tagName || '').toLowerCase();
+            if (tag === 'section' || (cur.parentElement.getAttribute && cur.parentElement.getAttribute('role') === 'region')) return cur.parentElement;
+            cur = cur.parentElement; hops++;
+        }
+    } catch (e) {}
+    return el;
+}
+
+// Resolve the label->element observe targets for the current page (Path C, then
+// Path-B heading fallback). Returns [{label, el}].
+function _swAttnResolveTargets() {
+    var targets = [];
+    var used = {};
+    var path = (typeof window !== 'undefined' && window.location) ? window.location.pathname : '/';
+    var clin = (typeof CLINICIAN_BY_PATH !== 'undefined') ? CLINICIAN_BY_PATH : null;
+    var mapped = (typeof resolveSectionsForPath === 'function') ? resolveSectionsForPath(path, clin) : null;
+    var headings = _swAttnHeadings();
+
+    if (mapped && mapped.labels) {
+        for (var i = 0; i < mapped.labels.length; i++) {
+            var label = mapped.labels[i];
+            for (var j = 0; j < headings.length; j++) {
+                if (typeof labelMatchesHeading === 'function' && labelMatchesHeading(label, headings[j].text)) {
+                    targets.push({ label: label, el: _swAttnContainer(headings[j].el) });
+                    used[label] = true;
+                    break;
+                }
+            }
+        }
+    }
+    // Path-B fallback: if no mapped label resolved to a heading, auto-section by heading.
+    if (!targets.length && typeof autoSectionsFromHeadings === 'function') {
+        var texts = [];
+        for (var k = 0; k < headings.length; k++) texts.push(headings[k].text);
+        var autos = autoSectionsFromHeadings(texts);
+        for (var a = 0; a < autos.length; a++) {
+            // find the heading whose text produced this auto-section
+            for (var h = 0; h < headings.length; h++) {
+                if (headings[h].text === autos[a].headingText) {
+                    targets.push({ label: autos[a].label, el: _swAttnContainer(headings[h].el) });
+                    break;
+                }
+            }
+        }
+    }
+    return targets;
+}
+
+function initAttention() {
+    if (!_swAttnEnabled()) return;
+    try {
+        if (typeof document === 'undefined' || typeof IntersectionObserver === 'undefined') return;
+        _swAttnCore = createAttentionCore(SW_ATTN_IDLE_MS, SW_ATTN_ENTER_PCT);
+        var now = Date.now();
+        var vis = (document.visibilityState) ? (document.visibilityState === 'visible') : true;
+        if (vis) _swAttnCore.onVisible(now); else _swAttnCore.onHidden(now);
+
+        var targets = _swAttnResolveTargets();
+        if (targets.length) {
+            var byEl = [];
+            _swAttnObserver = new IntersectionObserver(function (entries) {
+                if (!_swAttnCore) return;
+                for (var e = 0; e < entries.length; e++) {
+                    var label = null;
+                    for (var t = 0; t < byEl.length; t++) if (byEl[t].el === entries[e].target) { label = byEl[t].label; break; }
+                    if (label) _swAttnCore.onSectionVisibility(label, (entries[e].intersectionRatio || 0) * 100, Date.now());
+                }
+            }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
+            for (var i = 0; i < targets.length; i++) {
+                if (targets[i].el) { byEl.push(targets[i]); try { _swAttnObserver.observe(targets[i].el); } catch (e2) {} }
+            }
+        }
+
+        if (!_swAttnWired) {
+            _swAttnWired = true;
+            document.addEventListener('visibilitychange', function () {
+                if (!_swAttnCore) return;
+                if (document.visibilityState === 'hidden') _swAttnCore.onHidden(Date.now());
+                else _swAttnCore.onVisible(Date.now());
+            });
+            if (typeof window !== 'undefined') {
+                window.addEventListener('blur',  function () { if (_swAttnCore) _swAttnCore.onHidden(Date.now()); });
+                window.addEventListener('focus', function () { if (_swAttnCore) _swAttnCore.onVisible(Date.now()); });
+                var ev = ['scroll', 'mousemove', 'keydown', 'touchstart', 'click'];
+                for (var m = 0; m < ev.length; m++) {
+                    try { window.addEventListener(ev[m], _swAttnActivity, { passive: true }); }
+                    catch (e3) { window.addEventListener(ev[m], _swAttnActivity, false); }
+                }
+            }
+        }
+        _swAttnActivity();
+    } catch (e) { _swAttnCore = null; }
+}
+
+// Non-mutating snapshot -> the ordered per-section array (pulled by finalizeEntry).
+function getAttentionResult(now) {
+    try {
+        if (!_swAttnCore) return null;
+        var r = _swAttnCore.value(typeof now === 'number' ? now : Date.now());
+        return (r && r.sections && r.sections.length) ? r.sections : null;
+    } catch (e) { return null; }
+}
+
+// Rich snapshot incl. rollups (topSection/deepestSection) -- used by tests + any
+// consumer that wants the rollups without decoding the array.
+function getAttentionRich(now) {
+    try { return _swAttnCore ? _swAttnCore.value(typeof now === 'number' ? now : Date.now()) : null; }
     catch (e) { return null; }
 }
 
@@ -3211,6 +3609,44 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
         }
         var journeyArr = (journey && Array.isArray(journey.journey)) ? journey.journey : null;
 
+        // ---- perPageTelemetry summary (WS-B Phase 3b): fold the breadcrumb's
+        // per-page dwell/scroll/section signal into one PII-free summary + overall
+        // section rollups, so the report reads richest signal without decoding the
+        // journey array. Neutral section labels only; never text/PII. Fail-open.
+        var perPageTelemetry = null;
+        try {
+            if (journeyArr && journeyArr.length) {
+                var _ppPages = [], _ovSecs = {}, _deep = null, _deepTs = -1;
+                for (var _pi = 0; _pi < journeyArr.length; _pi++) {
+                    var _en = journeyArr[_pi];
+                    if (!_en) continue;
+                    var _hasT = (_en.engaged_dwell_ms != null || _en.scroll != null || (_en.sections && _en.sections.length));
+                    if (!_hasT) continue;
+                    var _pt = {
+                        path: _en.path, page_type: _en.page_type,
+                        engaged_dwell_ms: (_en.engaged_dwell_ms != null) ? _en.engaged_dwell_ms : null,
+                        scroll_max_pct: (_en.scroll && _en.scroll.max_pct != null) ? _en.scroll.max_pct : null,
+                        topSection: (_en.sections && _en.sections.length) ? _en.sections[0].label : null,
+                        sections: (_en.sections && _en.sections.length) ? _en.sections : null
+                    };
+                    _ppPages.push(_pt);
+                    if (_en.sections) {
+                        for (var _si = 0; _si < _en.sections.length; _si++) {
+                            var _s = _en.sections[_si];
+                            _ovSecs[_s.label] = (_ovSecs[_s.label] || 0) + (_s.engaged_dwell_ms || 0);
+                            if (_s.first_seen_ts != null && _s.first_seen_ts > _deepTs) { _deepTs = _s.first_seen_ts; _deep = _s.label; }
+                        }
+                    }
+                }
+                if (_ppPages.length) {
+                    var _topS = null, _topE = -1;
+                    for (var _l in _ovSecs) { if (_ovSecs.hasOwnProperty(_l) && _ovSecs[_l] > _topE) { _topE = _ovSecs[_l]; _topS = _l; } }
+                    perPageTelemetry = { pages: _ppPages, topSection: _topS, deepestSection: _deep,
+                                         sectionCount: (function () { var n = 0; for (var _k in _ovSecs) if (_ovSecs.hasOwnProperty(_k)) n++; return n; })() };
+                }
+            }
+        } catch (_e) { perPageTelemetry = null; }
+
         // ---- profileCompleteness: per-layer coverage flags for WS-E ---------
         var profileCompleteness = {
             acquisition: _getLocal(e, K.ftTrafficSource) != null,
@@ -3221,6 +3657,9 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
             breadcrumb:  !!(journeyArr && journeyArr.length),   // WS-B Phase 2
             telemetry:   !!(journeyArr && journeyArr.some(function (en) {   // WS-B Phase 3
                              return en && (en.engaged_dwell_ms != null || en.scroll != null);
+                         })),
+            sectionAttention: !!(journeyArr && journeyArr.some(function (en) {   // WS-B Phase 3b
+                             return en && en.sections && en.sections.length;
                          })),
             identity:    !!(pii.email || pii.name)
         };
@@ -3340,7 +3779,7 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
                 revisits: null,                  // Phase 2 (WS-C)
                 crossSession: null,              // Phase 2 (WS-B)
                 funnelPosition: null,            // Phase 2 (WS-B)
-                perPageTelemetry: null,          // Phase 3 (WS-B)
+                perPageTelemetry: perPageTelemetry,   // WS-B Phase 3b (section attention)
                 clinicianInterestRanked: null,   // Phase 2 (WS-C)
                 bestFitRationale: null,          // Phase 2 (WS-C)
                 bestFitAlternates: null,         // Phase 2 (WS-C)
@@ -4946,6 +5385,7 @@ function initEmbedListener() {
         // guarded so a Phase-2-only bundle stays safe if these modules are absent.
         try { if (typeof initDwell === 'function') initDwell(); } catch (e) { /* non-fatal */ }
         try { if (typeof initScroll === 'function') initScroll(); } catch (e) { /* non-fatal */ }
+        try { if (typeof initAttention === 'function') initAttention(); } catch (e) { /* non-fatal */ }  // WS-B Phase 3b
 
         // -- WS-B Phase 2: wire journey exit-flush ONCE per page load (mirrors the
         // sw-forms abandonment triple hook). visibilitychange->hidden = primary
