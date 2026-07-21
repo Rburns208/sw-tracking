@@ -5355,6 +5355,10 @@ function initEmbedListener() {
         if (SERVICE_BY_PATH[normalizedPath])    serviceAttrs    = SERVICE_BY_PATH[normalizedPath];
         if (CLINICIAN_BY_PATH[normalizedPath])  clinicianAttrs  = CLINICIAN_BY_PATH[normalizedPath];
         if (ASSESSMENT_BY_PATH[normalizedPath]) assessmentAttrs = ASSESSMENT_BY_PATH[normalizedPath];
+        // -- first_service_viewed (Build-1): write-once first-touch service on a service page,
+        //    set BEFORE getAllFirstTouchAttrs() so it lands in this same-page envelope. Setter is
+        //    write-once + typeof-guarded; never throws.
+        try { if (pageType === 'service' && serviceAttrs.service_name && typeof maybeSetFirstService === 'function') maybeSetFirstService(serviceAttrs.service_name); } catch (e) { /* non-fatal */ }
 
         // -- /info dynamic landing context (Layer A) --
         let infoAttrs = {};
@@ -5558,9 +5562,13 @@ function initEmbedListener() {
                     else if (href.indexOf('/contact') > -1) label = (text.toLowerCase().indexOf('start today') > -1) ? 'start_today' : 'book_consult';
                     else if (href.indexOf('/meet-us') > -1 || href.indexOf('/team') > -1 || href.indexOf('/meet') > -1) label = 'meet_team';
                     if (!label) return;
+                    var destType = href.toLowerCase().indexOf('tel:') === 0 ? 'phone'
+                                 : (href.indexOf('/contact') > -1 ? 'contact_form'
+                                 : ((href.indexOf('/meet-us') > -1 || href.indexOf('/team') > -1 || href.indexOf('/meet') > -1) ? 'team_page' : ''));
                     sw_push('info_cta_click', {
                         cta_label: label,
                         cta_location: swNearestSectionLabel(a),
+                        cta_destination_type: destType,
                         cta_text: text,
                         link_url: href.split('?')[0].slice(0, 80)
                     });
