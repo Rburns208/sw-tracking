@@ -144,6 +144,25 @@ const CLINICIAN_BY_PATH = {
         clinician_takes_insurance: false,
         clinician_accepting_new: true
     },
+    // 2026-08-08: Brittany Lippert, PsyD. NET-ADD (not a replacement) with her OWN
+    // unique form instance 35c9fb32-... - no reassigned/shared UUID, unlike
+    // Kathryn->Bailey and Catherine->Abigail. Introduces 3 NEW taxonomy tokens
+    // (personality_disorders, bipolar_psychosis, lgbtqia_affirming);
+    // Ryan-approved 2026-08-08, Kiesa post-hoc clinical review pending.
+    // NOT carried: tics_tourette (she practices CBIT; token proposed + declined).
+    // NOT carried: depression - DELIBERATE (Ryan 2026-08-08). All eight clinicians treat it,
+    // so it cannot differentiate; the matcher's alphabetical tie-break would hand 100% of
+    // depression leads to one person. Kept untokenised so they stay practice-level.
+    // Full rationale + measurements in infer-core.js ROSTER.
+    '/brittany-lippert': {
+        clinician_name: 'brittany_lippert',
+        clinician_role: 'psychologist',
+        clinician_specialty_primary: 'ocd',
+        clinician_primary_service: 'therapy',
+        clinician_specialties: ['ocd', 'anxiety', 'trauma_ptsd', 'adhd', 'autism', 'audhd', 'couples_relationship_issues', 'family_parenting_dynamics', 'executive_function', 'personality_disorders', 'bipolar_psychosis', 'lgbtqia_affirming'],
+        clinician_takes_insurance: false,
+        clinician_accepting_new: true
+    },
     '/catherinecavin': {
         clinician_name: 'catherine_cavin',
         clinician_role: 'therapist',
@@ -335,6 +354,9 @@ const FORM_NAME_BY_ID = {
     // Clinician profile forms — one per clinician page
     '3cf5fa46-d0f2-4764-b4b1-eaa2bf274482': 'clinician_kiesa_kelly',          // /psychological-assessments + /kiesakelly
     'e522454a-a18f-40e6-a532-aebe5daed5ea': 'clinician_laura_travers_heinig', // /laura-travers-heinig
+    // 2026-08-08: Brittany's form is UNIQUE to her page - not shared, not reassigned.
+    // Verified via Googlebot-UA SSR fetch of /brittany-lippert (single form-<uuid> node).
+    '35c9fb32-48f7-4a15-bd61-43ce44125a19': 'clinician_brittany_lippert',     // /brittany-lippert
     // 2026-07-07: this shared Wix form instance is reassigned Catherine -> Abigail
     // (Abigail is replacing Catherine, who is departing soon). /catherinecavin AND
     // /abigail-jones render this SAME form UUID. Lead clinician attribution is
@@ -389,7 +411,8 @@ const FORM_META = {
     clinician_ryan_robertson:      { form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_hannah_pollok:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
     clinician_bailey_basham:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
-    clinician_abigail_jones:       { form_type: 'clinician_contact', lead_value_estimate: 250 }
+    clinician_abigail_jones:       { form_type: 'clinician_contact', lead_value_estimate: 250 },
+    clinician_brittany_lippert:    { form_type: 'clinician_contact', lead_value_estimate: 250 } // 2026-08-08 net-add; unique form instance
 };
 
 // --------------------------------------------------------------------------
