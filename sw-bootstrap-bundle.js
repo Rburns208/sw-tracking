@@ -2032,7 +2032,14 @@ const RULES = [
     { pattern: /\b(peri-?\w*-?adhd|hormones-?neurodivergent)\b/i, cluster: 'perimenopause_neurodivergence' },
 
     // Health psychology — women's health umbrella (no neurodivergence overlap)
-    { pattern: /\b(menopause|perimenopause|pregnancy|postpartum|hormones|reproductive|womens-?health|pcos|menstrual)\b/i, cluster: 'health_psychology' },
+    { pattern: /\b(menopause|perimenopause|pregnancy|postpartum|hormones|reproductive|womens-?health|pcos|menstrual|pmdd|premenstrual)\b/i, cluster: 'health_psychology' },
+
+    // Twice-exceptional (2e) — high ability co-occurring with a neurodivergent or
+    // learning profile. MUST precede the ND rules below: 2e content names a
+    // co-occurring condition by definition, so behind them a 2e post is swallowed by
+    // whichever condition it happens to mention. /post/twice-exceptional-adults
+    // classified to 'adhd' on exactly that path before this rule existed.
+    { pattern: /\b(twice-?exceptional|2e|gifted)\b/i, cluster: 'twice_exceptional' },
 
     // AuDHD — co-occurring ADHD + autism
     { pattern: /\b(audhd|adhd-?(and-?)?autism|co-?occurring-?adhd)\b/i, cluster: 'audhd' },
@@ -2074,11 +2081,15 @@ const RULES = [
     { pattern: /\b(executive-?function|ef-?coaching|time-?management|working-?memory)\b/i, cluster: 'executive_function' },
 
     // Screener interpretation
-    { pattern: /\b(screener|asrs|aq-?10|y-?bocs|abo|gad-?7|phq-?9|esq-?r)\b/i, cluster: 'screener_interpretation' }
+    { pattern: /\b(screener|asrs|aq-?10|docs|abo|gad-?7|phq-?9|esq-?r)\b/i, cluster: 'screener_interpretation' }
 ];
 
 // ----- Main classifier ----------------------------------------------------
-// Returns one of the 18 cluster values (including 'unassigned' fallback).
+// Returns one of the 19 cluster values (including 'unassigned' fallback).
+// OQ-W5 2026-08-21: +twice_exceptional; pmdd/premenstrual -> health_psychology;
+// y-bocs -> docs (blog v6.9 screener rename, previously library-side only).
+// Mirror of scienceworks-blog references/cluster-cta-library.md CLASSIFIER RULES.
+// If you change either, change both, then run scripts/check_classifier_sync.py.
 function classifyPost(slug, title) {
     const haystack = ((slug || '') + ' ' + (title || '')).toLowerCase();
     if (!haystack.trim()) return 'unassigned';
@@ -2122,6 +2133,7 @@ function classifyPostCategory(slug, title) {
         adhd: 'adhd',
         autism: 'autism',
         audhd: 'adhd_autism',
+        twice_exceptional: 'twice_exceptional',
         anxiety: 'anxiety_depression',
         depression: 'anxiety_depression',
         trauma_ptsd: 'trauma',
