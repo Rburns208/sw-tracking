@@ -756,6 +756,29 @@ function __sw_observeCtaCandidates() {
     });
 }
 
+// BCI-W3 (2026-09-02): /post lane helpers.
+// __sw_isPostPath gates the href-only relaxation in __sw_classifyCta to blog
+// posts only. __sw_isInArticle implements Ryan's 2026-09-01 chrome-CTA ruling:
+// site header/footer CTAs are KEPT and FLAGGED rather than excluded, and the
+// filter is enforced in the lake reader (post_cta_events, in_article_only=True).
+// The article-container test was MEASURED 2026-09-01 across 4 posts / 22 links
+// with zero errors. __sw_detectLocation is NOT usable for this - Wix emits no
+// semantic <header>/<footer>, so it returns 'body' for 3 of the 4 chrome CTAs.
+function __sw_isPostPath() {
+    try {
+        const p = ((window.location && window.location.pathname) || '').toLowerCase();
+        return p.indexOf('/post/') === 0;
+    } catch (e) { return false; }
+}
+
+function __sw_isInArticle(el) {
+    try {
+        if (!el || typeof document === 'undefined') return false;
+        const container = document.querySelector('main, [data-hook="post-content"], article');
+        return !!(container && container.contains(el));
+    } catch (e) { return false; }
+}
+
 function __sw_classifyCta(el) {
     // 1) Explicit data-cta-* attrs (search element + 3 ancestors)
     let cur = el;
@@ -775,8 +798,16 @@ function __sw_classifyCta(el) {
     const href = el.getAttribute('href') || '';
     const cls = (typeof el.className === 'string') ? el.className : '';
     const isButtonish = CTA_BUTTON_CLASSES.test(cls) || el.tagName === 'BUTTON';
-    if (!isButtonish) return null;
-    if (CTA_TEXT_PATTERN.test(text) || CTA_HREF_PATTERN.test(href)) {
+    // BCI-W3 (2026-09-02): on /post ONLY, an href match alone classifies.
+    // In-article blog CTAs are Ricos prose links carrying no button class, so
+    // the unconditional `if (!isButtonish) return null` here made every blog CTA
+    // invisible to the classifier - /post cta_click was 0 rows all-time.
+    // The TEXT branch keeps its button-like requirement on EVERY lane:
+    // CTA_TEXT_PATTERN matches ordinary prose ("schedule an evaluation") and
+    // would otherwise promote every phrase link in an article to a CTA.
+    const hrefHit = CTA_HREF_PATTERN.test(href);
+    if (!isButtonish && !(__sw_isPostPath() && hrefHit)) return null;
+    if (CTA_TEXT_PATTERN.test(text) || hrefHit) {
         return {
             source: 'regex',
             label: __sw_slugify(text || el.id || 'cta'),
@@ -902,6 +933,11 @@ function __sw_pushCtaClick(el, cta) {
         prior_cta_clicks_in_session: __sw_getPriorCtaClicksInSession(),
         scroll_at_click: __sw_getScrollAtClickPercent(),
         time_on_page_seconds: __sw_getTimeOnPageSeconds(),
+        // BCI-W3 (2026-09-02): chrome CTAs are kept and flagged, never dropped
+        // at the classifier - a footer "Schedule Online!" click after reading a
+        // post IS a blog-driven conversion. Consumers must filter via the lake
+        // reader, not by convention.
+        cta_in_article: __sw_isInArticle(el),
         _sw_cta_classifier: cta.source
     });
 }
@@ -2028,7 +2064,7 @@ const RULES = [
     { pattern: /\b(erp|i-?cbt|ocd-treatment|exposure-response|r-?ocd|relationship-?ocd)\b/i, cluster: 'ocd' },
 
     // Perimenopause + neurodivergence overlap — more specific than either alone
-    { pattern: /\b(perimenopause|menopause)\b/i, requires: /\b(adhd|autism|neurodivergen|asd)\b/i, cluster: 'perimenopause_neurodivergence' },
+    { pattern: /\b(perimenopause|menopause)\b/i, requires: /\b(adhd|autism|autistic|neurodivergen|asd)\b/i, cluster: 'perimenopause_neurodivergence' },
     { pattern: /\b(peri-?\w*-?adhd|hormones-?neurodivergent)\b/i, cluster: 'perimenopause_neurodivergence' },
 
     // Health psychology — women's health umbrella (no neurodivergence overlap)
@@ -2048,7 +2084,7 @@ const RULES = [
     { pattern: /\badhd\b/i, cluster: 'adhd' },
 
     // Autism-only
-    { pattern: /\b(autism|asd|aspergers?)\b/i, cluster: 'autism' },
+    { pattern: /\b(autism|autistic|asd|aspergers?)\b/i, cluster: 'autism' },
 
     // OCD (general)
     { pattern: /\bocd\b/i, cluster: 'ocd' },
