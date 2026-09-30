@@ -545,9 +545,57 @@ function getDeviceClass(userAgent) {
 // ----- Traffic-source classifier ------------------------------------------
 // Derives a simplified first-touch channel from referrer + UTM params.
 // Returns: organic | paid_search | paid_social | organic_social | email |
-//          referral | direct | other
+//          ai_referral | referral | direct | other
+//
+// v2 (2026-09-30): matches on the PARSED HOSTNAME, anchored at a label boundary.
+// v1 ran unanchored substring regexes over the full referrer URL, so `t\.co`
+// (Twitter's shortener) matched inside "chatgp[t.co]m" and "medicatconnec[t.co]m"
+// and filed both as organic_social; `google\.` filed mail.google.com as organic
+// search. v2 adds the ai_referral bucket (AI assistants, by referrer host OR by
+// utm_source - ChatGPT tags outbound links utm_source=chatgpt.com), checks email
+// and AI hosts BEFORE the generic google/yahoo search rules, and counts Brave /
+// Startpage / Kagi as search. Bump TRAFFIC_CLASSIFIER_VERSION on any rule change:
+// sw-first-touch.js re-derives a returning device's stored first touch when the
+// version it was classified under differs.
+const TRAFFIC_CLASSIFIER_VERSION = '2';
+
+const _AI_HOSTS = ['chatgpt.com', 'chat.openai.com', 'openai.com', 'perplexity.ai',
+    'gemini.google.com', 'bard.google.com', 'copilot.microsoft.com', 'copilot.com',
+    'copilot.cloud.microsoft',
+    'claude.ai', 'meta.ai', 'you.com', 'phind.com', 'poe.com', 'deepseek.com',
+    'chat.mistral.ai', 'grok.com'];
+const _AI_UTM_SOURCES = ['chatgpt.com', 'chatgpt', 'openai', 'openai.com', 'perplexity',
+    'perplexity.ai', 'gemini', 'copilot', 'copilot.com', 'claude', 'claude.ai', 'meta.ai', 'grok'];
+const _EMAIL_HOSTS = ['mail.google.com', 'com.google.android.gm', 'outlook.live.com',
+    'outlook.office.com', 'outlook.office365.com', 'mail.yahoo.com', 'mail.proton.me',
+    'protonmail.com', 'mail.aol.com'];
+const _SEARCH_HOSTS = ['bing.com', 'duckduckgo.com', 'ecosia.org', 'qwant.com',
+    'search.brave.com', 'startpage.com', 'kagi.com', 'yandex.com', 'baidu.com',
+    'com.google.android.googlequicksearchbox'];
+const _SOCIAL_HOSTS = ['facebook.com', 'fb.com', 'instagram.com', 'linkedin.com',
+    'lnkd.in', 'twitter.com', 'x.com', 't.co', 'tiktok.com', 'pinterest.com',
+    'reddit.com'];
+
+// host === domain, or host is a subdomain of it. Never a bare substring.
+function _hostIs(host, domain) {
+    return host === domain || host.slice(-(domain.length + 1)) === '.' + domain;
+}
+function _hostIn(host, list) {
+    for (let i = 0; i < list.length; i++) { if (_hostIs(host, list[i])) return true; }
+    return false;
+}
+// Accepts a full referrer URL ("https://chatgpt.com/") OR a bare hostname
+// ("chatgpt.com", as stored in sw_ft_referrer_domain). '' when unparseable.
+function _refHost(referrer) {
+    const r = String(referrer || '').trim().toLowerCase();
+    if (!r) return '';
+    if (/^[a-z0-9.-]+$/.test(r)) return r;
+    try { return new URL(r).hostname.toLowerCase(); } catch (e) { return ''; }
+}
+
 function getTrafficSource(referrer, utm) {
-    const r = (referrer || '').toLowerCase();
+    const r = String(referrer || '').trim();
+    const host = _refHost(r);
     const src = (utm && utm.utm_source || '').toLowerCase();
     const med = (utm && utm.utm_medium || '').toLowerCase();
 
@@ -555,22 +603,24 @@ function getTrafficSource(referrer, utm) {
     if (med === 'cpc' || med === 'paid' || med === 'ppc' || med === 'paid_search') return 'paid_search';
     if (med === 'paid_social' || med === 'social_paid' || med === 'social-paid') return 'paid_social';
     if (med === 'email') return 'email';
+    if (src && _AI_UTM_SOURCES.indexOf(src) !== -1) return 'ai_referral';
     if (med === 'organic') return 'organic';
     if (med === 'referral') return 'referral';
     if (med === 'social' || med === 'organic_social') return 'organic_social';
 
-    // Referrer-driven classifications
+    // Referrer-driven classifications (hostname, label-anchored; order matters:
+    // AI + email hosts live under google/yahoo/microsoft and must win first)
     if (!r) return 'direct';
-    if (/google\.|bing\.|yahoo\.|duckduckgo\.|ecosia\.|qwant\./.test(r)) return 'organic';
-    if (/facebook\.|instagram\.|linkedin\.|twitter\.|t\.co|tiktok\.|pinterest\.|reddit\./.test(r)) return 'organic_social';
-    if (/mail\.google\.|outlook\.|yahoomail\.|protonmail\./.test(r)) return 'email';
-    // Self-referral (same-domain) collapses to direct
-    try {
-        const refHost = new URL(r).hostname.toLowerCase();
-        const pageHost = (typeof window !== 'undefined' && window.location.hostname || '').toLowerCase();
-        if (refHost && pageHost && refHost.endsWith(pageHost)) return 'direct';
-    } catch (e) { /* ignore malformed referrer */ }
-
+    if (host) {
+        if (_hostIn(host, _AI_HOSTS)) return 'ai_referral';
+        if (_hostIn(host, _EMAIL_HOSTS)) return 'email';
+        if (/(^|\.)google\.[a-z.]+$/.test(host) || /(^|\.)yahoo\.[a-z.]+$/.test(host)) return 'organic';
+        if (_hostIn(host, _SEARCH_HOSTS)) return 'organic';
+        if (_hostIn(host, _SOCIAL_HOSTS)) return 'organic_social';
+        // Self-referral (same-domain) collapses to direct
+        const pageHost = (typeof window !== 'undefined' && window.location && window.location.hostname || '').toLowerCase();
+        if (pageHost && _hostIs(host, pageHost.replace(/^www\./, ''))) return 'direct';
+    }
     return 'referral';
 }
 
@@ -582,7 +632,7 @@ function getReferrerDomain(referrer) {
 }
 
 // ----- Entry method classifier (used for view_service / _blog_post / etc.) -
-// direct | organic_search | paid_social | internal_navigation | email | referral | other
+// direct | organic_search | paid_social | internal_navigation | email | ai_referral | referral | other
 function getEntryMethod(referrer, utm) {
     // If we're inside a session (pushed from session state, not first hit)
     // the caller passes a prior-page flag — see sw-session.js
@@ -591,6 +641,7 @@ function getEntryMethod(referrer, utm) {
     if (src === 'paid_search') return 'paid_search';
     if (src === 'paid_social') return 'paid_social';
     if (src === 'email') return 'email';
+    if (src === 'ai_referral') return 'ai_referral';
     if (src === 'referral') return 'referral';
     if (src === 'direct') return 'direct';
     return 'other';
@@ -960,6 +1011,10 @@ function __sw_pushCtaClick(el, cta) {
 // actually landed on, which we only know once that page's code runs.
 // ============================================================================
 
+// Records which traffic-classifier version produced sw_ft_traffic_source, so a
+// rule change can re-derive a returning device's stored first touch (below).
+const LS_FT_CLASSIFIER_V = 'sw_ft_classifier_v';
+
 const LS_KEYS = {
     first_traffic_source:    'sw_ft_traffic_source',
     first_utm_source:        'sw_ft_utm_source',
@@ -977,14 +1032,31 @@ const LS_KEYS = {
 // Sets the first 7 attributes. The three page-specific ones get set later by
 // their respective view events (see maybeSetFirstBlogPost, etc.).
 function maybeSetFirstTouchBootstrap(pathname, referrer, utm, userAgent) {
-    // If any first_* key already exists, bail entirely. The user has been
-    // here before; we don't overwrite their first-touch trail.
-    if (safeGetLocal(LS_KEYS.first_traffic_source, null) != null) return;
+    // If any first_* key already exists, the user has been here before and we
+    // don't overwrite their first-touch TRAIL. The one exception is the channel
+    // LABEL: if it was classified under an older classifier version, re-derive
+    // it from the stored first-touch referrer domain + UTMs (the original inputs,
+    // not today's visit). Nothing else is rewritten.
+    if (safeGetLocal(LS_KEYS.first_traffic_source, null) != null) {
+        try {
+            if (safeGetLocal(LS_FT_CLASSIFIER_V, '') !== TRAFFIC_CLASSIFIER_VERSION) {
+                const healed = getTrafficSource(
+                    safeGetLocal(LS_KEYS.first_referrer_domain, ''),
+                    { utm_source:   safeGetLocal(LS_KEYS.first_utm_source, ''),
+                      utm_medium:   safeGetLocal(LS_KEYS.first_utm_medium, ''),
+                      utm_campaign: safeGetLocal(LS_KEYS.first_utm_campaign, '') });
+                if (healed) safeSetLocal(LS_KEYS.first_traffic_source, healed);
+                safeSetLocal(LS_FT_CLASSIFIER_V, TRAFFIC_CLASSIFIER_VERSION);
+            }
+        } catch (e) { /* non-fatal: keep the stored label */ }
+        return;
+    }
 
     const utmObj = utm || {};
     const trafficSource = getTrafficSource(referrer, utmObj);
     const referrerDomain = getReferrerDomain(referrer);
     const deviceClass = getDeviceClass(userAgent);
+    safeSetLocal(LS_FT_CLASSIFIER_V, TRAFFIC_CLASSIFIER_VERSION);
 
     safeSetLocal(LS_KEYS.first_traffic_source,  trafficSource);
     safeSetLocal(LS_KEYS.first_utm_source,      utmObj.utm_source   || '');
