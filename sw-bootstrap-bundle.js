@@ -5227,6 +5227,16 @@ function initScreenerListener() {
 // ============================================================================
 
 const SW_EMBED_ORIGIN     = 'https://www-scienceworkshealth-com.filesusr.com';
+// SFC-W17 (2026-10-11): a Wix BLOG-POST HTML block renders from the site-id domains,
+// not the site-HTML-element domain above (measured on the post preview:
+// https://1ba77993-7be6-4bf6-b095-a368ce613415.usrfiles.com; the editor used the
+// .filesusr.com twin). EXACT strings only -- never a suffix or wildcard match, so a
+// page on any other Wix site can never feed this listener.
+const SW_EMBED_ORIGINS = {
+    'https://www-scienceworkshealth-com.filesusr.com': 1,
+    'https://1ba77993-7be6-4bf6-b095-a368ce613415.usrfiles.com': 1,
+    'https://1ba77993-7be6-4bf6-b095-a368ce613415.filesusr.com': 1
+};
 const SW_EMBED_DEDUPE_MS  = 200;
 const SW_EMBED_ID_RE      = /^embed_[a-z_]+$/;
 const SW_EMBED_ID_CHAR_RE = /[^a-z0-9_-]/g;
@@ -5274,8 +5284,8 @@ function bumpEmbedDropped() {
 }
 
 function handleEmbedMessage(e) {
-    // 1) Origin gate -- only Wix HTML embed iframe origin
-    if (!e || e.origin !== SW_EMBED_ORIGIN) return;
+    // 1) Origin gate -- only this site's Wix HTML embed iframe origins (exact match)
+    if (!e || !Object.prototype.hasOwnProperty.call(SW_EMBED_ORIGINS, e.origin)) return;
 
     const data = e.data;
 
