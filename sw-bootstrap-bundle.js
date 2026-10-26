@@ -36,6 +36,167 @@
     window.dataLayer = window.dataLayer || [];
 
 
+    // ====== sw-page-registry ======
+// ============================================================================
+// sw-page-registry.js - LCI-W1: the ONE hand-edited source of page knowledge
+// ============================================================================
+// Every page category, the service / clinician / screener attributes, the section
+// template, and the do-not-record flag live HERE and only here. Everything else is
+// GENERATED from this file: SERVICE_BY_PATH / CLINICIAN_BY_PATH / ASSESSMENT_BY_PATH
+// (sw-taxonomies.js), the section-map lists (sw-sections-map.js), the GTM lookup-table
+// import, and the Microsoft Clarity exclusion pattern. Guards (harness/test_registry.js)
+// fail when a live page is missing here, when a derived copy disagrees with it, or when
+// the pages sitemap lists a path recorded below as a redirect.
+//
+// Unlisted paths resolve to 'unclassified' (never silently 'other').
+// Created 2026-10-26 by tools/gen_registry_v1.py from the live rev-27 tables, with the
+// Review rulings of 2026-10-26 applied (rows 5-16, 30, 34). From now on edit this file.
+//
+// Entry fields: c = category; tpl = section template (null/absent = no template);
+// auto:false = no heading fallback either; svc / clin / asmt = attribute rows copied
+// verbatim to the GA4 dimensions; dnr = do-not-record reason (Clarity); why = reason an
+// allowlisted utility page exists. Labels stay neutral: they describe the page, never
+// the person.
+// ============================================================================
+
+var SW_PAGE_REGISTRY_VERSION = '2026-10-26.1';
+
+var SW_PAGE_CATEGORIES = ["homepage", "blog_post", "info_landing", "contact", "careers", "service", "clinician", "assessment_tool", "tool", "team_directory", "content_hub", "professional", "logistics", "utility"];
+
+// Funnel-depth rank per category (read by sw-journey.js for deepest_page_type).
+var SW_PAGE_DEPTH_RANK = {"homepage": 0, "careers": 0, "utility": 0, "unclassified": 0, "other": 0, "blog_post": 1, "info_landing": 1, "content_hub": 1, "tool": 1, "professional": 1, "assessment_tool": 2, "service": 2, "logistics": 2, "clinician": 3, "team_directory": 3, "contact": 4};
+
+var SW_PAGE_REGISTRY = {
+    "/": {"c": "homepage", "tpl": "home"},
+    "/contact": {"c": "contact", "tpl": "contact", "dnr": "contact form (Clarity v3)"},
+    "/careers": {"c": "careers"},
+    "/psychological-assessments": {"c": "service", "tpl": "service", "ovr": [["\\bcost of not knowing\\b", "services"]], "svc": {"service_name": "psychological_assessments", "service_category": "assessment", "rolls_up_to": "assessment_clinical_diagnostics", "service_variant": "comprehensive_diagnostic", "service_modality": "unassigned"}},
+    "/specialized-therapy": {"c": "service", "tpl": "service", "svc": {"service_name": "specialized_therapy", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "multispecialty_individual", "service_modality": "unassigned"}},
+    "/executive-function-coaching": {"c": "service", "tpl": "service", "svc": {"service_name": "executive_function_coaching", "service_category": "coaching", "rolls_up_to": "coaching_neurodivergent_adults", "service_variant": "coaching_neurodivergent", "service_modality": "unassigned"}},
+    "/mental-health-screening": {"c": "service", "tpl": "service", "svc": {"service_name": "mental_health_screening", "service_category": "screening", "rolls_up_to": "assessment_tools_only", "service_variant": "screener_tools_only", "service_modality": "unassigned"}, "dnr": "screener hub (Clarity v3)"},
+    "/ocd": {"c": "service", "tpl": "service", "svc": {"service_name": "service_ocd_condition_hub", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "condition_hub_ocd", "service_modality": "unassigned"}},
+    "/trauma": {"c": "service", "tpl": "service", "svc": {"service_name": "service_trauma_condition_hub", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "condition_hub_trauma", "service_modality": "unassigned"}},
+    "/insomnia": {"c": "service", "tpl": "service", "svc": {"service_name": "service_insomnia_condition_hub", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "condition_hub_insomnia", "service_modality": "unassigned"}},
+    "/medication-management": {"c": "service", "tpl": "service", "svc": {"service_name": "service_medication_management", "service_category": "referral", "rolls_up_to": "unassigned", "service_variant": "psychiatric_medication", "service_modality": "unassigned"}},
+    "/groups": {"c": "service", "tpl": "service", "svc": {"service_name": "service_groups", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "group_program", "service_modality": "multiple_modalities"}},
+    "/cbt-i-cbt-n": {"c": "service", "tpl": "service", "svc": {"service_name": "service_cbti_cbtn", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "modality_page_sleep", "service_modality": "unassigned"}},
+    "/integrated-care": {"c": "service", "tpl": "service", "svc": {"service_name": "service_integrated_care", "service_category": "therapy", "rolls_up_to": "integrated_care_multiple_services", "service_variant": "integrated_care", "service_modality": "unassigned"}},
+    "/neuroaffirmingassessments-therapy": {"c": "service", "tpl": "service", "svc": {"service_name": "service_neuroaffirming_care", "service_category": "assessment", "rolls_up_to": "integrated_care_multiple_services", "service_variant": "assessment_and_therapy", "service_modality": "unassigned"}},
+    "/enhancingchronicillnessoutcomes": {"c": "service", "tpl": "service", "svc": {"service_name": "service_chronic_illness_therapy", "service_category": "therapy", "rolls_up_to": "therapy_individual_adults", "service_variant": "health_psychology", "service_modality": "unassigned"}},
+    "/pre-surgical-assessment": {"c": "service", "tpl": "service", "svc": {"service_name": "pre_surgical_assessment", "service_category": "assessment", "rolls_up_to": "assessment_clinical_diagnostics", "service_variant": "pre_surgical", "service_modality": "unassigned"}, "dnr": "Clarity v4 (BWT-W3 interim; live embed bc757345 rev 3, read 2026-10-26)"},
+    "/kiesakelly": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "kiesa_kelly", "clinician_role": "psychologist", "clinician_specialty_primary": "clinical_diagnostics", "clinician_primary_service": "assessments", "clinician_specialties": ["ocd", "trauma_ptsd", "audhd", "adhd", "autism", "clinical_diagnostics"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/laura-travers-heinig": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "laura_travers_heinig", "clinician_role": "psychologist", "clinician_specialty_primary": "womens_health", "clinician_primary_service": "therapy", "clinician_specialties": ["health_psychology", "insomnia_sleep", "perimenopause_neurodivergence", "trauma_ptsd"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/brittany-lippert": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "brittany_lippert", "clinician_role": "psychologist", "clinician_specialty_primary": "ocd", "clinician_primary_service": "therapy", "clinician_specialties": ["ocd", "anxiety", "trauma_ptsd", "adhd", "autism", "audhd", "couples_relationship_issues", "family_parenting_dynamics", "executive_function", "personality_disorders", "bipolar_psychosis", "lgbtqia_affirming"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/ryan-robertson": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "ryan_robertson", "clinician_role": "therapist", "clinician_specialty_primary": "couples_family_therapy", "clinician_primary_service": "therapy", "clinician_specialties": ["couples_relationship_issues", "family_parenting_dynamics", "ocd", "adhd", "autism", "audhd", "insomnia_sleep"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/shane-thrapp": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "shane_thrapp", "clinician_role": "coach", "clinician_specialty_primary": "executive_function", "clinician_primary_service": "coaching", "clinician_specialties": ["adhd", "autism", "audhd", "executive_function"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/hannah-pollok": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "hannah_pollok", "clinician_role": "therapist", "clinician_specialty_primary": "couples_family_therapy", "clinician_primary_service": "therapy", "clinician_specialties": ["couples_relationship_issues", "family_parenting_dynamics", "adhd", "autism", "audhd", "executive_function", "perimenopause_neurodivergence", "health_psychology", "anxiety", "trauma_ptsd", "chronic_illness"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/bailey-basham": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "bailey_basham", "clinician_role": "therapist", "clinician_specialty_primary": "trauma", "clinician_primary_service": "therapy", "clinician_specialties": ["trauma_ptsd", "couples_relationship_issues", "family_parenting_dynamics", "anxiety", "adhd", "autism", "executive_function"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/abigail-jones": {"c": "clinician", "tpl": "clinician", "clin": {"clinician_name": "abigail_jones", "clinician_role": "therapist", "clinician_specialty_primary": "trauma", "clinician_primary_service": "therapy", "clinician_specialties": ["ocd", "trauma_ptsd", "anxiety", "adhd", "autism", "audhd", "insomnia_sleep", "chronic_illness", "executive_function"], "clinician_takes_insurance": false, "clinician_accepting_new": true}},
+    "/docs": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "docs", "assessment_category": "ocd", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/asrs": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "asrs", "assessment_category": "adhd", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/aq-10": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "aq_10", "assessment_category": "autism", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/esq-r": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "esq_r", "assessment_category": "executive_function", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/phq-9": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "phq_9", "assessment_category": "depression", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/gad-7": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "gad_7", "assessment_category": "anxiety", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/promis-29": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "promis_29", "assessment_category": "general_health", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/raads-14": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "raads_14", "assessment_category": "autism", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/abo": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "abo", "assessment_category": "autism", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/cat-q": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "cat_q", "assessment_category": "autism", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/pcl-5": {"c": "assessment_tool", "tpl": "screener", "asmt": {"assessment_name": "pcl_5", "assessment_category": "trauma_ptsd", "assessment_age_range": "adult", "assessment_self_scoring": true}, "dnr": "screener page (Clarity v3)"},
+    "/emdr-bilateral-stimulation": {"c": "tool", "tpl": "tool"},
+    "/meet-us-1": {"c": "team_directory", "tpl": "team_directory"},
+    "/news-and-research": {"c": "content_hub", "tpl": "feed"},
+    "/in-depth-research": {"c": "content_hub", "tpl": "feed"},
+    "/resources": {"c": "content_hub", "tpl": "feed"},
+    "/patient-referrals": {"c": "professional", "tpl": "professional"},
+    "/practice-facts": {"c": "logistics", "tpl": "logistics"},
+    "/client-portal": {"c": "logistics", "dnr": "client portal (Clarity v3)", "auto": false},
+    "/emergency-resources-1": {"c": "logistics", "auto": false},
+    "/assessments": {"c": "logistics", "auto": false, "dnr": "Clarity v4 (BWT-W3 interim; live embed bc757345 rev 3, read 2026-10-26)"},
+    "/privacy-policy": {"c": "utility", "auto": false, "why": "policy page"},
+    "/confirmation": {"c": "utility", "dnr": "form-submit landing (Clarity v3)", "auto": false, "why": "form-submit landing; LCI capture path, load-bearing"},
+    "/thank-you-page": {"c": "utility", "auto": false, "why": "Wix stock page, noindex"},
+    "/cart-page": {"c": "utility", "auto": false, "why": "Wix stock page, noindex"},
+    "/preliminary-screening": {"c": "utility", "auto": false, "why": "Wix stock page, noindex; purpose not established (LCI-W1 inventory section 9)", "dnr": "Clarity v4 (BWT-W3 interim; live embed bc757345 rev 3, read 2026-10-26)"}
+};
+
+// Families: matched by path prefix after the exact registry misses.
+var SW_PAGE_FAMILIES = [
+    {"prefix": "/post/", "c": "blog_post", "tpl": "blog"},
+    {"prefix": "/info/", "c": "info_landing", "tpl": "info"},
+    {"prefix": "/news-and-research/categories/", "c": "content_hub", "tpl": "feed"},
+    {"prefix": "/service-page/", "c": "logistics", "auto": false, "dnr": "Wix Bookings service page (Clarity v3)"},
+    {"prefix": "/booking-calendar", "c": "logistics", "auto": false, "dnr": "booking flow (Clarity v3)"},
+    {"prefix": "/booking-form", "c": "logistics", "auto": false, "dnr": "booking flow (Clarity v3)"},
+    {"prefix": "/bookings-checkout", "c": "logistics", "auto": false, "dnr": "booking flow (Clarity v3)"},
+    {"prefix": "/account", "c": "utility", "auto": false, "dnr": "members area (Clarity v3)"},
+    {"prefix": "/members-area", "c": "utility", "auto": false, "dnr": "members area (Clarity v3)"},
+    {"prefix": "/mentalhealthscreening", "c": "utility", "auto": false, "dnr": "legacy screener path, 404 today; kept to mirror Clarity v3, BWT owns removal"}
+];
+
+// Paths that 301 (Wix redirect table, read 2026-10-24). The page-list guard fails if the
+// pages sitemap lists any of them (Review row 30). Not used at runtime for tracking.
+var SW_PAGE_REDIRECTS = {"/25162427": "/", "/25162427a": "/", "/adhd-autism-assessments": "/psychological-assessments", "/adhd-autism-assessments-25162427": "/psychological-assessments", "/adhd-autism-assessments-25162427a": "/psychological-assessments", "/book-online": "/contact", "/catherinecavin": "/abigail-jones", "/chronic-illness-disability": "/info/chronic-illness-and-medical-trauma-therapy-tennessee", "/copy-of-specialized-therapy": "/specialized-therapy", "/dr-kiesa-kelly": "/kiesakelly", "/draft-elements": "/", "/kathryn-wood": "/bailey-basham", "/kiesakelly1-1": "/kiesakelly", "/michele-bechor-phd": "/meet-us-1", "/scheduling": "/contact", "/services": "/specialized-therapy", "/trauma-ptsd-emdr": "/trauma", "/y-bocs": "/docs", "/service-page/shane-thrapp-adhd-ccsp": "/shane-thrapp"};
+var SW_PAGE_REDIRECT_DNR = {"/book-online": "booking flow (Clarity v3)", "/scheduling": "booking flow (Clarity v3)"};
+
+function swNormPath(p) {
+    if (!p || typeof p !== 'string') return '/';
+    p = p.split('?')[0].split('#')[0].trim().toLowerCase();
+    if (p.length > 1) p = p.replace(/\/+$/, '');
+    return p || '/';
+}
+
+// Resolve a path to its registry entry. Returns { path, c, e } where e is the entry
+// (exact page or family); unknown paths return c:'unclassified' with e = null.
+function swResolvePage(path) {
+    var p = swNormPath(path);
+    if (SW_PAGE_REGISTRY.hasOwnProperty(p)) return { path: p, c: SW_PAGE_REGISTRY[p].c, e: SW_PAGE_REGISTRY[p] };
+    for (var i = 0; i < SW_PAGE_FAMILIES.length; i++) {
+        var f = SW_PAGE_FAMILIES[i];
+        var pre = f.prefix;
+        if (pre.charAt(pre.length - 1) === '/') {
+            if (p.indexOf(pre) === 0) return { path: p, c: f.c, e: f };
+        } else if (p === pre || p.indexOf(pre + '/') === 0) {
+            return { path: p, c: f.c, e: f };
+        }
+    }
+    return { path: p, c: 'unclassified', e: null };
+}
+
+// Derive a path -> attribute-row table (attr = 'svc' | 'clin' | 'asmt'). Rows are the
+// registry's own objects (read-only by convention), so a derived copy can never drift.
+function swDeriveByPath(attr) {
+    var out = {};
+    for (var p in SW_PAGE_REGISTRY) {
+        if (SW_PAGE_REGISTRY.hasOwnProperty(p) && SW_PAGE_REGISTRY[p][attr]) out[p] = SW_PAGE_REGISTRY[p][attr];
+    }
+    return out;
+}
+
+// Paths whose entry uses a given section template (used by sw-sections-map.js).
+function swPathsWithTemplate(tpl) {
+    var out = [];
+    for (var p in SW_PAGE_REGISTRY) {
+        if (SW_PAGE_REGISTRY.hasOwnProperty(p) && SW_PAGE_REGISTRY[p].tpl === tpl) out.push(p);
+    }
+    return out;
+}
+
+// Top-level path segments a session-replay tool (Microsoft Clarity) must never record.
+// Sorted, de-duplicated. The cross-copy guard compares this set with the live embed.
+function swDoNotRecordSegments() {
+    var seen = {}, out = [];
+    function add(path) {
+        var seg = swNormPath(path).split('/')[1] || '';
+        if (seg && !seen[seg]) { seen[seg] = true; out.push(seg); }
+    }
+    for (var p in SW_PAGE_REGISTRY) if (SW_PAGE_REGISTRY.hasOwnProperty(p) && SW_PAGE_REGISTRY[p].dnr) add(p);
+    for (var i = 0; i < SW_PAGE_FAMILIES.length; i++) if (SW_PAGE_FAMILIES[i].dnr) add(SW_PAGE_FAMILIES[i].prefix);
+    for (var r in SW_PAGE_REDIRECT_DNR) if (SW_PAGE_REDIRECT_DNR.hasOwnProperty(r)) add(r);
+    out.sort();
+    return out;
+}
+
     // ====== sw-taxonomies ======
 // ============================================================================
 // sw-taxonomies.js — Lookup tables for service/clinician/assessment dimensions
@@ -44,267 +205,21 @@
 // Updating these here (and republishing Velo) is a one-place change that
 // propagates to every event tag via dataLayer.
 //
-// Paired with the GTM container's lookup tables — keep both in sync if you add
-// a new service page, clinician, or assessment tool.
+// LCI-W1 (2026-10-26): SERVICE_BY_PATH / CLINICIAN_BY_PATH / ASSESSMENT_BY_PATH are
+// GENERATED from sw-page-registry.js. Add or change a page THERE, never here. The GTM
+// lookup tables are generated from the registry too (tools/gen_gtm_import.py).
 // ============================================================================
 
 // --------------------------------------------------------------------------
-// Service pages — homepage tiles + condition hubs
+// Service / clinician / screener tables: GENERATED from sw-page-registry.js (LCI-W1).
+// The derived objects ARE the registry's rows, so these tables cannot drift from it.
+// Row-level history comments (e.g. the 2026-08-08 Brittany Lippert notes) are kept in the
+// PRE backup: Backups/Lead Conversion Intelligence/2026-10-26 lci-w1-v1 (PRE)/.
 // --------------------------------------------------------------------------
-// URL path (lowercased, no trailing slash) → { service_name, service_category }
-// service_name is the event-level dimension (granular, per-page).
-// service_category rolls multiple service_names up to a user-level segment.
-const SERVICE_BY_PATH = {
-    '/psychological-assessments': {
-        service_name: 'psychological_assessments',
-        service_category: 'assessment',
-        rolls_up_to: 'assessment_clinical_diagnostics',
-        service_variant: 'comprehensive_diagnostic',
-        service_modality: 'unassigned'
-    },
-    '/specialized-therapy': {
-        service_name: 'specialized_therapy',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'multispecialty_individual',
-        service_modality: 'multiple_modalities'
-    },
-    '/executive-function-coaching': {
-        service_name: 'executive_function_coaching',
-        service_category: 'coaching',
-        rolls_up_to: 'coaching_neurodivergent_adults',
-        service_variant: 'coaching_neurodivergent',
-        service_modality: 'unassigned'
-    },
-    '/mental-health-screening': {
-        service_name: 'mental_health_screening',
-        service_category: 'screening',
-        rolls_up_to: 'assessment_tools_only',
-        service_variant: 'screener_tools_only',
-        service_modality: 'unassigned'
-    },
-    // Condition-specific hubs — tracked as distinct service_name but roll up
-    // to therapy_individual_adults at the user level.
-    '/ocd': {
-        service_name: 'service_ocd_condition_hub',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'condition_hub_ocd',
-        service_modality: 'erp'
-    },
-    '/trauma': {
-        service_name: 'service_trauma_condition_hub',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'condition_hub_trauma',
-        service_modality: 'emdr'
-    },
-    '/insomnia': {
-        service_name: 'service_insomnia_condition_hub',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'condition_hub_insomnia',
-        service_modality: 'cbt_i'
-    },
-    '/medication-management': {
-        service_name: 'service_medication_management',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'psychiatric_medication',
-        service_modality: 'unassigned'
-    },
-    '/groups': {
-        service_name: 'service_groups',
-        service_category: 'therapy',
-        rolls_up_to: 'therapy_individual_adults',
-        service_variant: 'group_program',
-        service_modality: 'multiple_modalities'
-    }
-};
-
-// --------------------------------------------------------------------------
-// Clinician profile pages
-// --------------------------------------------------------------------------
-const CLINICIAN_BY_PATH = {
-    '/kiesakelly': {
-        clinician_name: 'kiesa_kelly',
-        clinician_role: 'psychologist',
-        clinician_specialty_primary: 'clinical_diagnostics',
-        clinician_primary_service: 'assessments',
-        clinician_specialties: ['ocd', 'trauma_ptsd', 'audhd', 'adhd', 'autism', 'clinical_diagnostics'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/laura-travers-heinig': {
-        clinician_name: 'laura_travers_heinig',
-        clinician_role: 'psychologist',
-        clinician_specialty_primary: 'womens_health',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['health_psychology', 'insomnia_sleep', 'perimenopause_neurodivergence', 'trauma_ptsd'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    // 2026-08-08: Brittany Lippert, PsyD. NET-ADD (not a replacement) with her OWN
-    // unique form instance 35c9fb32-... - no reassigned/shared UUID, unlike
-    // Kathryn->Bailey and Catherine->Abigail. Introduces 3 NEW taxonomy tokens
-    // (personality_disorders, bipolar_psychosis, lgbtqia_affirming);
-    // Ryan-approved 2026-08-08, Kiesa post-hoc clinical review pending.
-    // NOT carried: tics_tourette (she practices CBIT; token proposed + declined).
-    // NOT carried: depression - DELIBERATE (Ryan 2026-08-08). All eight clinicians treat it,
-    // so it cannot differentiate; the matcher's alphabetical tie-break would hand 100% of
-    // depression leads to one person. Kept untokenised so they stay practice-level.
-    // Full rationale + measurements in infer-core.js ROSTER.
-    '/brittany-lippert': {
-        clinician_name: 'brittany_lippert',
-        clinician_role: 'psychologist',
-        clinician_specialty_primary: 'ocd',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['ocd', 'anxiety', 'trauma_ptsd', 'adhd', 'autism', 'audhd', 'couples_relationship_issues', 'family_parenting_dynamics', 'executive_function', 'personality_disorders', 'bipolar_psychosis', 'lgbtqia_affirming'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/catherinecavin': {
-        clinician_name: 'catherine_cavin',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'adhd_autism',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['ocd', 'adhd', 'autism', 'chronic_illness'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/kathryn-wood': {
-        clinician_name: 'kathryn_wood',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'trauma',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['anxiety', 'ocd', 'trauma_ptsd', 'insomnia_sleep'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/ryan-robertson': {
-        clinician_name: 'ryan_robertson',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'couples_family_therapy',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['couples_relationship_issues', 'family_parenting_dynamics', 'ocd', 'adhd', 'autism', 'audhd', 'insomnia_sleep'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/shane-thrapp': {
-        clinician_name: 'shane_thrapp',
-        clinician_role: 'coach',
-        clinician_specialty_primary: 'executive_function',
-        clinician_primary_service: 'coaching',
-        clinician_specialties: ['adhd', 'autism', 'audhd', 'executive_function'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    // Added 2026-07-03 from the confirmed team roster (memory/people/team-roster.md).
-    '/hannah-pollok': {
-        clinician_name: 'hannah_pollok',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'couples_family_therapy',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['couples_relationship_issues', 'family_parenting_dynamics', 'adhd', 'autism', 'audhd', 'executive_function', 'perimenopause_neurodivergence', 'health_psychology', 'anxiety', 'trauma_ptsd', 'chronic_illness'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    '/bailey-basham': {
-        clinician_name: 'bailey_basham',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'trauma',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['trauma_ptsd', 'couples_relationship_issues', 'family_parenting_dynamics', 'anxiety', 'adhd', 'autism', 'executive_function'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    },
-    // Added 2026-07-07 from the confirmed team roster (memory/people/team-roster.md).
-    // Abigail is replacing Catherine Cavin (departing soon) and shares Catherine's
-    // form instance d0a38253 (see FORM_NAME_BY_ID transition note).
-    '/abigail-jones': {
-        clinician_name: 'abigail_jones',
-        clinician_role: 'therapist',
-        clinician_specialty_primary: 'trauma',
-        clinician_primary_service: 'therapy',
-        clinician_specialties: ['ocd', 'trauma_ptsd', 'anxiety', 'adhd', 'autism', 'audhd', 'insomnia_sleep', 'chronic_illness', 'executive_function'],
-        clinician_takes_insurance: false,
-        clinician_accepting_new: true
-    }
-};
-
-// --------------------------------------------------------------------------
-// Assessment-tool landing pages
-// --------------------------------------------------------------------------
-const ASSESSMENT_BY_PATH = {
-    '/docs': {
-        assessment_name: 'docs',
-        assessment_category: 'ocd',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/asrs': {
-        assessment_name: 'asrs',
-        assessment_category: 'adhd',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/aq-10': {
-        assessment_name: 'aq_10',
-        assessment_category: 'autism',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/esq-r': {
-        assessment_name: 'esq_r',
-        assessment_category: 'executive_function',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/phq-9': {
-        assessment_name: 'phq_9',
-        assessment_category: 'depression',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/gad-7': {
-        assessment_name: 'gad_7',
-        assessment_category: 'anxiety',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    // Restored 2026-07-14 (screeners regressed to 6 in the LCI rebuild from the
-    // pre-LCI 11-screener config; exact values cloned from the Apr-27 built bundle).
-    '/promis-29': {
-        assessment_name: 'promis_29',
-        assessment_category: 'general_health',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/raads-14': {
-        assessment_name: 'raads_14',
-        assessment_category: 'autism',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/abo': {
-        assessment_name: 'abo',
-        assessment_category: 'autism',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/cat-q': {
-        assessment_name: 'cat_q',
-        assessment_category: 'autism',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    },
-    '/pcl-5': {
-        assessment_name: 'pcl_5',
-        assessment_category: 'trauma_ptsd',
-        assessment_age_range: 'adult',
-        assessment_self_scoring: true
-    }
-};
+// URL path (lowercased, no trailing slash) -> attribute row.
+const SERVICE_BY_PATH = swDeriveByPath('svc');
+const CLINICIAN_BY_PATH = swDeriveByPath('clin');
+const ASSESSMENT_BY_PATH = swDeriveByPath('asmt');
 
 // --------------------------------------------------------------------------
 // Form name catalog — canonical names used across generate_lead + form_start
@@ -503,19 +418,11 @@ function getInfoService(slug) {
 // ============================================================================
 
 // ----- Page-type classifier ------------------------------------------------
-// Returns one of: homepage | blog_post | service | clinician |
-//                 assessment_tool | contact | careers | other
+// LCI-W1 (2026-10-26): the category comes from sw-page-registry.js, the one source.
+// Returns a SW_PAGE_CATEGORIES value; a path nobody classified returns 'unclassified'
+// (it used to fall silently into 'other', which is how 20 pages drifted).
 function getPageType(pathname) {
-    const p = (pathname || '').toLowerCase().replace(/\/$/, '') || '/';
-    if (p === '/' || p === '') return 'homepage';
-    if (p.startsWith('/post/')) return 'blog_post';
-    if (p === '/contact') return 'contact';
-    if (p === '/careers') return 'careers';
-    if (p.startsWith('/info/')) return 'info_landing';
-    if (SERVICE_BY_PATH[p]) return 'service';
-    if (CLINICIAN_BY_PATH[p]) return 'clinician';
-    if (ASSESSMENT_BY_PATH[p]) return 'assessment_tool';
-    return 'other';
+    return swResolvePage(pathname).c;
 }
 
 // ----- URL parameter helpers ----------------------------------------------
@@ -1269,13 +1176,8 @@ function _jEnabled() {
 }
 
 // ---- funnel-depth ranking for deepest_page_type ---------------------------
-const _J_DEPTH_RANK = {
-    homepage: 0, careers: 0, other: 0,
-    blog_post: 1, info_landing: 1,
-    assessment_tool: 2, service: 2,
-    clinician: 3,
-    contact: 4
-};
+// LCI-W1: ranks per category live in sw-page-registry.js (SW_PAGE_DEPTH_RANK).
+const _J_DEPTH_RANK = SW_PAGE_DEPTH_RANK;
 function _jDepthRank(pt) { return (pt in _J_DEPTH_RANK) ? _J_DEPTH_RANK[pt] : 0; }
 
 // ---- store read helpers ---------------------------------------------------
@@ -1418,7 +1320,9 @@ function finalizeEntry() {
         // typeof-guarded so sw-journey stays standalone-safe when Phase 3 absent).
         var _swDwell  = (typeof getDwellMs === 'function')      ? (function () { try { return getDwellMs(now); } catch (e) { return null; } })() : null;
         var _swScroll = (typeof getScrollResult === 'function') ? (function () { try { return getScrollResult();  } catch (e) { return null; } })() : null;
-        var _swSections = (typeof getAttentionResult === 'function') ? (function () { try { return getAttentionResult(now); } catch (e) { return null; } })() : null;   // WS-B Phase 3b
+        var _swSections = (typeof getAttentionResult === 'function') ? (function () { try { return getAttentionResult(now); } catch (e) { return null; } })() : null;
+        // LCI-W1: unattributed remainder, open tabs and in-page jumps for this page.
+        var _swSecMeta = (typeof getAttentionMeta === 'function') ? (function () { try { return getAttentionMeta(now); } catch (e) { return null; } })() : null;   // WS-B Phase 3b
 
         const log = _jReadLog();
         const li = _jFindIdxBySeq(log, _jLiveSeq);
@@ -1429,6 +1333,16 @@ function finalizeEntry() {
             if (_swDwell != null) log[li].engaged_dwell_ms = _swDwell;
             if (_swScroll) log[li].scroll = _swScroll;
             if (_swSections) log[li].sections = _swSections;
+            if (_swSecMeta) log[li].section_meta = _swSecMeta;
+            // LCI-W1 (row 17): credit each read treatment card ONCE per page visit, the
+            // first time its reading crosses the floor (this runs on every hide).
+            if (_swSections && typeof applyTreatmentCredits === 'function') {
+                var _swDone = Array.isArray(log[li].treat_credited) ? log[li].treat_credited : [];
+                try {
+                    var _swTc = applyTreatmentCredits(_swSections, null, null, null, _swDone);
+                    if (_swTc && _swTc.credited && _swTc.credited.length) log[li].treat_credited = _swDone.concat(_swTc.credited);
+                } catch (e) {}
+            }
             _jPersistLog(log);
         }
 
@@ -1441,6 +1355,7 @@ function finalizeEntry() {
             if (_swDwell != null) sarr[si].engaged_dwell_ms = _swDwell;
             if (_swScroll) sarr[si].scroll = _swScroll;
             if (_swSections) sarr[si].sections = _swSections;
+            if (_swSecMeta) sarr[si].section_meta = _swSecMeta;
             _jPersistSess(sarr);
         }
         // Keep _jLiveSeq so a later hidden re-finalizes in place; initEntry()
@@ -1717,69 +1632,91 @@ function getScrollResult() {
 
     // ====== sw-sections-map ======
 // ============================================================================
-// sw-sections-map.js - WS-B Phase 3b: versioned section-definition map (Path C)
+// sw-sections-map.js - section definitions for sw-attention.js (WS-B Phase 3b; LCI-W1 v2)
 // ============================================================================
-// The section-definition SOURCE for sw-attention.js. Path C (config-map): section
-// definitions live HERE, in the version-controlled bundle, NOT as data-sw-section
-// attributes in the Wix editor (which Dev-Mode-disabled Wix cannot expose -- the
-// same WDE0027 constraint that forced the Firestore pivot). Maintained + reviewed
-// + shipped down the existing rule-9 re-pin path like any other bundle change.
-//
-// A "section" = a NEUTRAL region label (pricing / insurance / symptoms / ...) plus
-// a keyword rule matched against the page's h2/h3 heading text at runtime. Labels
-// are neutral by construction -- NEVER a diagnosis, NEVER PII (no 'has_ocd'; use
-// 'symptoms'). The label taxonomy is centralized in LABEL_RULES so every template
-// family draws from the same reviewed vocabulary.
-//
-// Coverage: all meaningful template families (homepage, /info dynamic template,
-// blog-post template, service pages, clinician pages, contact, screener pages).
-// Any page not matched here falls back to Path-B heuristic auto-sectioning
-// (partition by h2/h3), so no page yields zero section data.
-//
-// DOM-free data + pure resolvers -> unit-testable. No IntersectionObserver here;
+// Pure, DOM-free data and functions, so every rule here is unit-testable in node.
 // sw-attention.js owns the browser wiring.
+//
+// A "section" is a NEUTRAL region of a page: a label that describes the page
+// region (pricing / faq / a treatment card), never the person. Labels are never a
+// diagnosis and never PII.
+//
+// LCI-W1 v2 (2026-10-26, Review rows 18-24, 35):
+//  - Which template a page uses comes from sw-page-registry.js (one source).
+//  - Every heading becomes its own section; nothing is dropped. Repeats keep the
+//    plain base `label` (the lead server sums by it) and get a numbered `key`.
+//  - Keywords match whole words (plural s/es allowed; a trailing * marks an open
+//    prefix). Substring matching put 'pricing' on "Feeling...", "feels", "feedback".
+//  - Treatment cards are recognised from SW_TREATMENTS (Kiesa-gated vocabulary).
+//  - Blog cards in a feed are feed items, never page sections.
+//  - Section time is split by the share of the SCREEN each region fills
+//    (computeShares), so equal cards share time and the rest stays unattributed.
 // ============================================================================
+var SW_SECTIONS_MAP_VERSION = '2';
 
-// Centralized NEUTRAL label taxonomy: label -> heading-text keyword triggers
-// (lowercased substring match). Add/adjust vocabulary HERE; keep labels neutral.
+// Centralized NEUTRAL label taxonomy: label -> heading keywords.
 var SW_LABEL_RULES = {
-    pricing:     ['cost', 'price', 'pricing', 'fee', 'how much', 'payment', 'out-of-pocket', 'out of pocket', 'self-pay', 'self pay', 'rates', 'affordab'],
-    insurance:   ['insurance', 'coverage', 'in-network', 'in network', 'out-of-network', 'superbill', 'reimburs', 'benefits'],
-    symptoms:    ['symptom', 'signs', 'what is', 'do i have', 'criteria', 'traits', 'presentation', 'experience'],
+    pricing:     ['cost', 'price', 'pricing', 'fee', 'how much', 'payment', 'out-of-pocket', 'out of pocket', 'self-pay', 'self pay', 'rate', 'affordab*'],
+    insurance:   ['insurance', 'coverage', 'in-network', 'in network', 'out-of-network', 'out of network', 'superbill', 'reimburs*', 'insurance benefits'],
+    symptoms:    ['symptom', 'signs', 'what is', 'do i have', 'criteria', 'traits', 'presentation'],
+    stats:       ['by the numbers', 'statistics', 'facts and figures'],
     process:     ['what to expect', 'process', 'how it works', 'how does', 'steps', 'timeline', 'what happens', 'appointment', 'booking', 'schedule', 'getting started', 'first visit'],
-    services:    ['services', 'what we offer', 'assessment', 'evaluation', 'therapy', 'coaching', 'testing', 'diagnos', 'treatment', 'our approach'],
-    credentials: ['about', 'our team', 'meet', 'clinician', 'qualif', 'license', 'credential', 'experience', 'background', 'who we are'],
+    services:    ['services', 'what we offer', 'assessment', 'evaluation', 'therapy', 'coaching', 'testing', 'diagnos*', 'treatment', 'our approach'],
+    credentials: ['about', 'our team', 'meet', 'clinician', 'qualif*', 'license', 'credential', 'background', 'who we are'],
     faq:         ['faq', 'frequently asked', 'common questions', 'questions'],
-    results:     ['results', 'your score', 'scoring', 'what your', 'interpret', 'next steps'],
+    results:     ['results', 'your score', 'scoring', 'what your', 'interpret*', 'next steps'],
     geo:         ['tennessee', 'nashville', 'near you', 'near me', 'location', 'in-person', 'telehealth', 'area', 'serving'],
-    cta:         ['get started', 'contact', 'book', 'reach out', 'ready', 'schedule a', 'request', 'call us']
+    cta:         ['free consultation', 'get started', 'contact', 'book', 'reach out', 'ready', 'schedule a', 'request', 'call us'],
+    about:       ['about', 'what is'],
+    how_to:      ['how to use', 'how to', 'instructions', 'directions'],
+    references:  ['references', 'sources', 'citations']
 };
 
-// Per-template ORDERED label lists (path-pattern -> [labels]). The resolver walks
-// PATH_RULES top-to-bottom; the first matching rule wins. `test` is a predicate
-// over the normalized path. Clinician pages are matched by a slug set injected at
-// resolve time (see resolveSectionsForPath).
+// Per-template label PRECEDENCE (first label whose keywords match wins). A heading
+// matching none of its template's labels becomes a generic section (`section` for
+// h2/h3, `card` for h4) with its heading text kept, so nothing is lost or merged.
 var SW_SECTION_TEMPLATES = {
-    home:      ['services', 'process', 'credentials', 'pricing', 'cta'],
-    contact:   ['pricing', 'insurance', 'process', 'cta'],
-    service:   ['services', 'process', 'pricing', 'insurance', 'faq', 'cta'],
-    blog:      ['symptoms', 'process', 'services', 'pricing', 'insurance', 'faq', 'cta'],
-    info:      ['services', 'symptoms', 'process', 'pricing', 'insurance', 'geo', 'faq', 'cta'],
-    clinician: ['credentials', 'services', 'process', 'cta'],
-    screener:  ['symptoms', 'results', 'services', 'cta']
+    home:           ['pricing', 'insurance', 'faq', 'credentials', 'process', 'services', 'cta'],
+    contact:        ['pricing', 'insurance', 'process', 'cta'],
+    service:        ['pricing', 'insurance', 'faq', 'stats', 'symptoms', 'credentials', 'cta', 'process', 'services'],
+    blog:           ['pricing', 'insurance', 'faq', 'symptoms', 'process', 'services', 'cta'],
+    info:           ['pricing', 'insurance', 'faq', 'geo', 'symptoms', 'process', 'services', 'cta'],
+    clinician:      ['credentials', 'services', 'process', 'cta'],
+    screener:       ['results', 'symptoms', 'services', 'cta'],
+    tool:           ['about', 'how_to', 'references', 'cta'],
+    team_directory: ['credentials', 'cta'],
+    feed:           [],
+    professional:   ['process', 'faq', 'cta'],
+    logistics:      ['pricing', 'geo', 'faq'],
+    generic:        ['pricing', 'insurance', 'faq', 'symptoms', 'process', 'services', 'credentials', 'results', 'geo', 'cta']
 };
 
-// Known service-page path prefixes (extend as the site grows).
-var SW_SERVICE_PATHS = [
-    '/psychological-assessments', '/therapy', '/executive-function-coaching',
-    '/mental-health-screening', '/assessments', '/services'
+// Treatment-card vocabulary (Review rows 17 and 25: KIESA SIGNS THIS LIST before it
+// ships). Ordered most-specific first. `key` uses the MODALITIES vocabulary in
+// sw-taxonomies.js where one exists, so a read card can credit the modality ledger.
+var SW_TREATMENTS = [
+    { key: 'icbt',                        re: /\binference[- ]based cbt\b|\bi-cbt\b/ },
+    { key: 'cbt_i',                       re: /\bcbt[- ]i\b|\bcbt for insomnia\b|\bcognitive behavioral therapy for insomnia\b/ },
+    { key: 'cbt_cp',                      re: /\bcbt[- ]cp\b|\bcbt for chronic pain\b/ },
+    { key: 'erp',                         re: /\bexposure[- ](and )?response prevention\b|\berp\b/ },
+    { key: 'emdr',                        re: /\beye movement desensitization\b|\bemdr\b/ },
+    { key: 'cpt',                         re: /\bcognitive processing therapy\b|\bcpt\b/ },
+    { key: 'dbt',                         re: /\bdialectical behavior therapy\b|\bdbt\b/ },
+    { key: 'act',                         re: /\bacceptance and commitment\b|\(act\)/ },
+    { key: 'neurocounseling',             re: /\bneurocounseling\b/ },
+    { key: 'motivational_interviewing',   re: /\bmotivational interviewing\b/ },
+    { key: 'gottman_method',              re: /\bgottman\b/ },
+    { key: 'parent_management_training',  re: /\bparent management training\b/ },
+    { key: 'family_systems_therapy',      re: /^family therapy$|\bfamily systems\b/ },
+    { key: 'executive_function_coaching', re: /\bexecutive function coaching\b/ },
+    { key: 'cbt',                         re: /\bcognitive behavioral therapy\b|\bcbt\b/ }
 ];
+var SW_CARD_MAX_CHARS = 60;   // a longer "heading" is a styled paragraph, not a card title
 
-// Known screener page paths (mirror ASSESSMENT_BY_PATH in sw-taxonomies.js).
-var SW_SCREENER_PATHS = [
-    '/docs', '/promis-29', '/pcl-5', '/raads-14', '/abo', '/cat-q',
-    '/asrs', '/gad-7', '/phq-9', '/audit', '/dast-10'
-];
+// LCI-W1: generated from sw-page-registry.js (entries whose section template is
+// 'service' / 'screener'); kept exported for existing consumers.
+var SW_SERVICE_PATHS = swPathsWithTemplate('service');
+var SW_SCREENER_PATHS = swPathsWithTemplate('screener');
 
 function normSectionPath(p) {
     if (!p || typeof p !== 'string') return '/';
@@ -1788,309 +1725,497 @@ function normSectionPath(p) {
     return p || '/';
 }
 
-// Resolve the ordered section label list for a page path (Path C). Returns
-// { template, labels } or null when the path is unmapped (-> Path-B fallback).
-// clinicianPaths: optional array/set of known clinician slugs (from sw-taxonomies
-// CLINICIAN_BY_PATH) so clinician bio pages route to the clinician template.
+// Resolve a page's section template. Returns { template, labels } or null for a page
+// with no template (the generic template then applies unless the registry says
+// auto:false). `clinicianPaths` is accepted for backward compatibility.
 function resolveSectionsForPath(path, clinicianPaths) {
     var p = normSectionPath(path);
     var tmpl = null;
-    if (p === '/' || p === '/home') tmpl = 'home';
-    else if (p === '/contact') tmpl = 'contact';
-    else if (p.indexOf('/post/') === 0) tmpl = 'blog';
-    else if (p.indexOf('/info/') === 0) tmpl = 'info';
-    else if (_inList(p, SW_SCREENER_PATHS)) tmpl = 'screener';
-    else if (_prefix(p, SW_SERVICE_PATHS)) tmpl = 'service';
-    else if (_isClinician(p, clinicianPaths)) tmpl = 'clinician';
-    if (!tmpl) return null;
+    if (typeof swResolvePage === 'function') {
+        var r = swResolvePage(p);
+        if (r && r.e && r.e.tpl) tmpl = r.e.tpl;
+    }
+    if (!tmpl && clinicianPaths && _isClinician(p, clinicianPaths)) tmpl = 'clinician';
+    if (!tmpl || !SW_SECTION_TEMPLATES[tmpl]) return null;
     return { template: tmpl, labels: SW_SECTION_TEMPLATES[tmpl].slice() };
 }
-
-function _inList(p, list) { for (var i = 0; i < list.length; i++) if (list[i] === p) return true; return false; }
-function _prefix(p, list) { for (var i = 0; i < list.length; i++) if (p === list[i] || p.indexOf(list[i] + '/') === 0) return true; return false; }
 function _isClinician(p, clinicianPaths) {
-    if (!clinicianPaths) return false;
     try {
         if (typeof clinicianPaths.indexOf === 'function') return clinicianPaths.indexOf(p) >= 0;
-        if (clinicianPaths[p] !== undefined) return true;   // object/map
+        if (clinicianPaths[p] !== undefined) return true;
     } catch (e) {}
     return false;
 }
+
+// ---- whole-word keyword matching ---------------------------------------------
+var _kwCache = {};
+function _escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function keywordRegex(kw) {
+    if (_kwCache[kw]) return _kwCache[kw];
+    var open = kw.charAt(kw.length - 1) === '*';
+    var body = _escapeRe(open ? kw.slice(0, -1) : kw).replace(/ /g, '\\s+');
+    var re = new RegExp('(^|[^a-z0-9])' + body + (open ? '' : '(s|es)?(?![a-z0-9])'), 'i');
+    _kwCache[kw] = re;
+    return re;
+}
+function normHeading(t) { return String(t || '').replace(/[\u200B-\u200D\uFEFF]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(); }
 
 // Given a label and a heading text, does the heading trigger this label? (pure)
 function labelMatchesHeading(label, headingText) {
     var kws = SW_LABEL_RULES[label];
     if (!kws || !headingText) return false;
-    var t = String(headingText).toLowerCase();
-    for (var i = 0; i < kws.length; i++) if (t.indexOf(kws[i]) >= 0) return true;
+    var t = normHeading(headingText);
+    for (var i = 0; i < kws.length; i++) if (keywordRegex(kws[i]).test(t)) return true;
     return false;
 }
 
-// Path-B fallback: derive neutral-ish section labels straight from an ordered list
-// of heading texts (used when resolveSectionsForPath returns null OR a mapped label
-// finds no heading). Each heading becomes a section; its label is the best-matching
-// taxonomy label, else a slugified heading (still text-only, PII-free). (pure)
-function autoSectionsFromHeadings(headingTexts) {
+// A heading written as a question is an FAQ item, never a treatment card (Kiesa label
+// sign-off #4, approved 2026-10-26): "How is I-CBT different from ERP?" stays a section.
+function treatmentOf(headingText) {
+    var t = normHeading(headingText);
+    if (!t || t.length > SW_CARD_MAX_CHARS) return null;
+    if (t.charAt(t.length - 1) === '?') return null;
+    for (var i = 0; i < SW_TREATMENTS.length; i++) if (SW_TREATMENTS[i].re.test(t)) return SW_TREATMENTS[i].key;
+    return null;
+}
+
+// Clinician name tokens from CLINICIAN_BY_PATH-style rows: [{key, tokens}].
+function clinicianTokens(clinicianRows) {
     var out = [];
-    var seen = {};
-    for (var i = 0; i < (headingTexts || []).length; i++) {
-        var h = headingTexts[i];
-        if (!h) continue;
-        var label = null;
-        for (var lab in SW_LABEL_RULES) {
-            if (SW_LABEL_RULES.hasOwnProperty(lab) && labelMatchesHeading(lab, h)) { label = lab; break; }
-        }
-        if (!label) label = _slugLabel(h);
-        if (!label || seen[label]) continue;   // de-dup labels within a page
-        seen[label] = true;
-        out.push({ label: label, headingText: h });
+    for (var p in (clinicianRows || {})) {
+        if (!clinicianRows.hasOwnProperty(p) || !clinicianRows[p] || !clinicianRows[p].clinician_name) continue;
+        out.push({ key: clinicianRows[p].clinician_name, tokens: clinicianRows[p].clinician_name.split('_') });
     }
     return out;
 }
+function _clinicianOf(t, clins) {
+    for (var i = 0; i < (clins || []).length; i++) {
+        var ok = true;
+        for (var j = 0; j < clins[i].tokens.length; j++) {
+            if (!keywordRegex(clins[i].tokens[j]).test(t)) { ok = false; break; }
+        }
+        if (ok) return clins[i].key;
+    }
+    return null;
+}
 
-function _slugLabel(h) {
-    return String(h).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+var FEED_HEADER_RE = /\bstay up to date\b|\bnews and research\b|\blatest (posts|articles)\b/;
+var HEADING_TEXT_MAX = 60;
+
+// Classify an ordered list of headings into sections (pure).
+//   heads: [{ text, level (1-4), inPostLink, inHashLink }]
+//   ctx:   { template, overrides: [[regexSource, label]], clinicians: [{key, tokens}],
+//            startCounts: {base: n} }   (startCounts lets a re-scan continue numbering)
+// Returns one record per usable heading:
+//   { i, label, key, n, group, treat?, clin?, heading? }
+// `label` stays a plain base label (the lead server sums by it); `key` is unique.
+function classifyHeadings(heads, ctx) {
+    ctx = ctx || {};
+    var tpl = SW_SECTION_TEMPLATES[ctx.template] || SW_SECTION_TEMPLATES.generic;
+    var counts = {};
+    var sc = ctx.startCounts || {};
+    for (var s in sc) if (sc.hasOwnProperty(s)) counts[s] = sc[s];
+    var ovr = [];
+    for (var o = 0; o < (ctx.overrides || []).length; o++) ovr.push([new RegExp(ctx.overrides[o][0], 'i'), ctx.overrides[o][1]]);
+    var out = [];
+    for (var i = 0; i < (heads || []).length; i++) {
+        var h = heads[i];
+        var t = normHeading(h && h.text);
+        if (!t || t.length < 2) continue;
+        var lvl = h.level || 2;
+        var rec = { i: i, label: null, group: 'section' };
+        if (h.inPostLink) { rec.label = 'feed_item'; rec.group = 'feed'; }
+        else if (FEED_HEADER_RE.test(t)) { rec.label = 'feed'; rec.group = 'feed'; }
+        else if (h.inHashLink) { rec.label = 'jump_link'; rec.group = 'nav'; }
+        else if (lvl === 1) { rec.label = 'hero'; rec.group = 'hero'; }
+        if (!rec.label) {
+            for (var k = 0; k < ovr.length; k++) if (ovr[k][0].test(t)) { rec.label = ovr[k][1]; break; }
+        }
+        if (!rec.label) {
+            var clin = _clinicianOf(t, ctx.clinicians);
+            if (clin) { rec.label = 'clinician_card'; rec.group = 'card'; rec.clin = clin; }
+        }
+        if (!rec.label && lvl >= 3) {
+            var tr = treatmentOf(t);
+            if (tr) { rec.label = 'treatment_card'; rec.group = 'card'; rec.treat = tr; }
+        }
+        if (!rec.label) {
+            for (var L = 0; L < tpl.length; L++) if (labelMatchesHeading(tpl[L], t)) { rec.label = tpl[L]; break; }
+        }
+        if (!rec.label) {
+            rec.label = (lvl >= 4) ? 'card' : 'section';
+            rec.group = (lvl >= 4) ? 'card' : 'section';
+        }
+        var base = rec.treat ? ('card_' + rec.treat) : (rec.clin ? ('clinician_' + rec.clin) : rec.label);
+        counts[base] = (counts[base] || 0) + 1;
+        rec.n = counts[base];
+        rec.key = base + '_' + rec.n;
+        if (rec.label === 'card' || rec.label === 'section' || rec.label === 'feed_item') {
+            rec.heading = String(h.text).replace(/\s+/g, ' ').trim().slice(0, HEADING_TEXT_MAX);
+        }
+        out.push(rec);
+    }
+    out.counts = counts;
+    return out;
+}
+
+// Path-B fallback kept for backward compatibility (pure): one record per heading,
+// labelled by the generic template, never dropped.
+function autoSectionsFromHeadings(headingTexts) {
+    var heads = [];
+    for (var i = 0; i < (headingTexts || []).length; i++) heads.push({ text: headingTexts[i], level: 2 });
+    var recs = classifyHeadings(heads, { template: 'generic' });
+    var out = [];
+    for (var j = 0; j < recs.length; j++) out.push({ label: recs[j].label, key: recs[j].key, headingText: headingTexts[recs[j].i] });
+    return out;
+}
+
+// Viewport-share attribution (pure). regions: [{ key, x, y, w, h }] in viewport
+// coordinates; vp: { w, h }. Returns { key: { share, ratio } } where share = the
+// fraction of the SCREEN this region covers (overlap between two regions split
+// evenly, total capped at 1) and ratio = the fraction of the REGION that is visible.
+function computeShares(regions, vp) {
+    var out = {};
+    if (!vp || !(vp.w > 0) || !(vp.h > 0)) return out;
+    var vis = [];
+    for (var i = 0; i < (regions || []).length; i++) {
+        var r = regions[i];
+        if (!r || !(r.w > 0) || !(r.h > 0)) { if (r && r.key) out[r.key] = { share: 0, ratio: 0 }; continue; }
+        var x1 = Math.max(0, r.x), y1 = Math.max(0, r.y);
+        var x2 = Math.min(vp.w, r.x + r.w), y2 = Math.min(vp.h, r.y + r.h);
+        var a = (x2 > x1 && y2 > y1) ? (x2 - x1) * (y2 - y1) : 0;
+        out[r.key] = { share: 0, ratio: a / (r.w * r.h) };
+        if (a > 0) vis.push({ key: r.key, x1: x1, y1: y1, x2: x2, y2: y2, a: a });
+    }
+    var eff = {};
+    for (var p = 0; p < vis.length; p++) eff[vis[p].key] = (eff[vis[p].key] || 0) + vis[p].a;
+    for (var m = 0; m < vis.length; m++) {
+        for (var n = m + 1; n < vis.length; n++) {
+            var A = vis[m], B = vis[n];
+            var ox = Math.min(A.x2, B.x2) - Math.max(A.x1, B.x1), oy = Math.min(A.y2, B.y2) - Math.max(A.y1, B.y1);
+            if (ox > 0 && oy > 0) { var ov = ox * oy; eff[A.key] -= ov / 2; eff[B.key] -= ov / 2; }
+        }
+    }
+    var screen = vp.w * vp.h, tot = 0;
+    for (var e in eff) if (eff.hasOwnProperty(e)) { eff[e] = Math.max(0, eff[e]) / screen; tot += eff[e]; }
+    var scale = tot > 1 ? 1 / tot : 1;
+    for (var f in eff) if (eff.hasOwnProperty(f)) out[f].share = eff[f] * scale;
+    return out;
 }
 
     // ====== sw-attention ======
 // ============================================================================
-// sw-attention.js - WS-B Phase 3b: per-section engaged-attention accumulator
+// sw-attention.js - per-section engaged attention (WS-B Phase 3b; LCI-W1 v2)
 // ============================================================================
-// Fills the third/last Phase-3 breadcrumb slot (`sections`): how much ENGAGED,
-// VISIBLE, non-idle time the user spent on each NEUTRAL region of a page (pricing
-// / insurance / symptoms / ...). The most health-inferential WS-B signal, so
-// capture is section LABELS + timings/percentages ONLY -- never text, never a
-// diagnosis, never PII. Section labels come from the versioned Path-C config-map
-// (sw-sections-map.js), NOT Wix-editor data-sw-section attributes.
+// Fills the breadcrumb's `sections` slot: how much ENGAGED reading time landed on
+// each NEUTRAL region of a page. Capture is labels, keys and timings only, plus the
+// page's own heading text for generic cards. Never PII, never a diagnosis.
 //
-// createAttentionCore() is a DOM-FREE, deterministic, timestamp-driven state
-// machine -> unit-testable in node (mirrors createDwellCore / createScrollCore).
-// Attribution is WINNER-TAKE-ALL: at any instant only the single most-visible
-// section accrues engaged time, so per-section times never double-count and sum
-// to <= engaged page time. Focus/idle discipline is the dwell core's (engaged
-// time credited only while visible AND not idle, capped at lastActivity+idleMs).
+// LCI-W1 v2 (2026-10-26, Review rows 18-24):
+//  - ONE CLOCK. Section time is the existing reading-time counter (sw-dwell
+//    getDwellMs) split across regions by the share of the SCREEN each one fills.
+//    So sum(sections) <= engaged dwell by construction, and the rest is reported
+//    honestly as unattributed. (v1 kept its own clock and over-counted by ~8%.)
+//  - No winner-take-all: equal cards share time; a tall region is measured fairly.
+//  - Every heading is its own region (sw-sections-map classifyHeadings); repeats
+//    keep their base label and get a numbered key.
+//  - Real tabs (role=tab) record which tab was open while time accrued; in-page
+//    jump links record where the reader jumped.
+//  - The page is re-scanned once after Wix finishes drawing late headings.
 //
-// initAttention()/getAttentionResult() are the thin browser shell: resolve the
-// page's sections (Path C map, Path-B heading fallback), wire ONE Intersection
-// Observer, feed the core. getAttentionResult() is a NON-MUTATING snapshot so
-// sw-journey.finalizeEntry() can pull it at exit order-independently. PII-free;
-// storage-first (zero GA4/dataLayer); gated behind window.__SW_JOURNEY_ENABLED.
+// createAttentionCore() is DOM-free and deterministic (unit-tested in node).
+// initAttention() / getAttentionResult() / getAttentionMeta() are the thin browser
+// shell; the getters are NON-MUTATING snapshots that sw-journey pulls at exit.
+// Gated behind window.__SW_JOURNEY_ENABLED; zero GA4 / dataLayer.
 // ============================================================================
 
-var SW_ATTN_IDLE_MS = 30000;   // mirror sw-dwell idle threshold (SPEC 4.1)
-var SW_ATTN_ENTER_PCT = 25;    // visibility % that counts as "entered" a section
-var SW_ATTN_MIN_ACCRUE_PCT = 1;// any visibility qualifies a section as accrual winner
+var SW_ATTN_ENTER_PCT = 25;      // % of a region visible that counts as "entered"
+var SW_ATTN_MAX_SECTIONS = 20;   // per page, kept by reading time (lead payload budget, see sw-lead-assembler)
+var SW_ATTN_RESCAN_MS = 2500;    // one re-scan after Wix hydration
+var SW_ATTN_TICK_MS = 1000;      // heartbeat sample while the page is visible
+var SW_ATTN_MAX_JUMPS = 20;
 
 // ---- pure, DOM-free core (unit-testable) ----------------------------------
-function createAttentionCore(idleMs, enterPct) {
-    idleMs   = (typeof idleMs === 'number' && idleMs > 0) ? idleMs : SW_ATTN_IDLE_MS;
+function createAttentionCore(enterPct) {
     enterPct = (typeof enterPct === 'number' && enterPct >= 0) ? enterPct : SW_ATTN_ENTER_PCT;
-    var secs = {};            // label -> {engaged, maxPct, firstSeen, entered, curPct, order}
+    var secs = {};            // key -> record
     var order = 0;
-    var activeLabel = null;
-    var activeStart = null;   // ts current engaged run began (for activeLabel), or null
-    var lastActivity = 0;
-    var visible = true;
+    var shares = {};          // key -> screen share in effect since the last sample
+    var lastDwell = null;     // dwell-clock reading at the last sample
 
-    function cap(ts) { return Math.min(ts, lastActivity + idleMs); }
-    function ensure(label) {
-        if (!secs[label]) secs[label] = { engaged: 0, maxPct: 0, firstSeen: null, entered: 0, curPct: 0, order: order++ };
-        return secs[label];
-    }
-    function closeActive(atTs) {
-        if (activeLabel != null && activeStart != null) {
-            var end = cap(atTs);
-            if (end > activeStart) secs[activeLabel].engaged += (end - activeStart);
-            activeStart = null;
+    function ensure(meta) {
+        if (!meta || !meta.key) return null;
+        if (!secs[meta.key]) {
+            secs[meta.key] = { meta: meta, engaged: 0, maxPct: 0, firstSeen: null, entered: 0, curPct: 0, order: order++ };
         }
+        return secs[meta.key];
     }
-    function winner() {   // most-visible section (>= min accrue), tie -> DOM order
-        var best = null, bestPct = SW_ATTN_MIN_ACCRUE_PCT - 1, bestOrder = Infinity;
-        for (var l in secs) {
-            if (!secs.hasOwnProperty(l)) continue;
-            var s = secs[l];
-            if (s.curPct >= SW_ATTN_MIN_ACCRUE_PCT &&
-                (s.curPct > bestPct || (s.curPct === bestPct && s.order < bestOrder))) {
-                best = l; bestPct = s.curPct; bestOrder = s.order;
-            }
+    function credit(dwellMs) {
+        if (typeof dwellMs !== 'number' || dwellMs < 0) return;
+        if (lastDwell != null && dwellMs > lastDwell) {
+            var d = dwellMs - lastDwell;
+            for (var k in shares) if (shares.hasOwnProperty(k) && secs[k]) secs[k].engaged += d * shares[k];
         }
-        return best;
-    }
-    function recompute(ts) {
-        var w = winner();
-        if (w !== activeLabel) {
-            closeActive(ts);
-            activeLabel = w;
-            activeStart = (w != null && visible) ? ts : null;
-        }
+        if (lastDwell == null || dwellMs > lastDwell) lastDwell = dwellMs;
     }
     return {
-        onSectionVisibility: function (label, pct, ts) {
-            if (!label) return;
-            pct = Math.min(100, Math.max(0, pct || 0));
-            var s = ensure(label);
-            if (pct >= enterPct && s.curPct < enterPct) {           // entering
-                s.entered += 1;
-                if (s.firstSeen == null) s.firstSeen = ts;
+        register: function (meta) { ensure(meta); },
+        // obs: { key: { share, ratio } } from computeShares; dwellMs: the ONE clock.
+        sample: function (dwellMs, obs, ts) {
+            credit(dwellMs);
+            var next = {};
+            for (var k in (obs || {})) {
+                if (!obs.hasOwnProperty(k) || !secs[k]) continue;
+                var s = secs[k], o = obs[k] || {};
+                var pct = Math.round(Math.min(1, Math.max(0, o.ratio || 0)) * 100);
+                if (pct >= enterPct && s.curPct < enterPct) { s.entered += 1; if (s.firstSeen == null) s.firstSeen = ts; }
+                if (pct > s.maxPct) s.maxPct = pct;
+                s.curPct = pct;
+                if (o.share > 0) next[k] = o.share;
             }
-            if (pct > s.maxPct) s.maxPct = pct;
-            s.curPct = pct;
-            lastActivity = ts;                                       // IO fire = activity
-            recompute(ts);
+            // Defence in depth: shares can never cover more than the whole screen, so
+            // sum(sections) <= reading time holds whatever the caller passes.
+            var tot = 0;
+            for (var q in next) if (next.hasOwnProperty(q)) tot += next[q];
+            if (tot > 1) for (var z in next) if (next.hasOwnProperty(z)) next[z] = next[z] / tot;
+            shares = next;
         },
-        onVisible:  function (ts) { visible = true; lastActivity = ts; if (activeLabel != null && activeStart == null) activeStart = ts; },
-        onHidden:   function (ts) { closeActive(ts); visible = false; },
-        onActivity: function (ts) { lastActivity = ts; if (visible && activeLabel != null && activeStart == null) activeStart = ts; },
-        onIdle:     function ()   { closeActive(lastActivity + idleMs); },
-        value: function (now) {
-            var arr = [];
-            for (var l in secs) {
-                if (!secs.hasOwnProperty(l)) continue;
-                var s = secs[l];
-                var eng = s.engaged;
-                if (l === activeLabel && activeStart != null) {     // add live run (non-mutating)
-                    var end = cap(now);
-                    if (end > activeStart) eng += (end - activeStart);
-                }
-                arr.push({ label: l, engaged_dwell_ms: Math.round(eng), max_visible_pct: s.maxPct,
-                           first_seen_ts: s.firstSeen, entered_count: s.entered, _order: s.order });
+        // Non-mutating snapshot at dwell reading dwellNow.
+        value: function (dwellNow) {
+            var live = (typeof dwellNow === 'number' && lastDwell != null && dwellNow > lastDwell) ? (dwellNow - lastDwell) : 0;
+            var arr = [], total = 0;
+            for (var k in secs) {
+                if (!secs.hasOwnProperty(k)) continue;
+                var s = secs[k];
+                var eng = Math.floor(s.engaged + (shares[k] ? live * shares[k] : 0));
+                if (eng <= 0 && s.entered === 0) continue;
+                total += eng;
+                // Stored record kept small (lead payload cap): `n` and `group` are derivable from key.
+                var r = { label: s.meta.label, key: k, engaged_dwell_ms: eng,
+                          max_visible_pct: s.maxPct, first_seen_ts: s.firstSeen, entered_count: s.entered, _order: s.order };
+                if (s.meta.treat) r.treat = s.meta.treat;
+                if (s.meta.clin) r.clin = s.meta.clin;
+                if (s.meta.heading) r.heading = s.meta.heading;
+                arr.push(r);
             }
             arr.sort(function (a, b) { return (b.engaged_dwell_ms - a.engaged_dwell_ms) || (a._order - b._order); });
-            var top = null, topEng = -1, deep = null, deepTs = -1;
+            var top = null, topKey = null, deep = null, deepTs = -1;
             for (var i = 0; i < arr.length; i++) {
-                if (arr[i].engaged_dwell_ms > topEng) { topEng = arr[i].engaged_dwell_ms; top = arr[i].label; }
+                if (i === 0 && arr[i].engaged_dwell_ms > 0) { top = arr[i].label; topKey = arr[i].key; }
                 if (arr[i].first_seen_ts != null && arr[i].first_seen_ts > deepTs) { deepTs = arr[i].first_seen_ts; deep = arr[i].label; }
                 delete arr[i]._order;
             }
-            return { sections: arr, topSection: top, deepestSection: deep };
+            if (arr.length > SW_ATTN_MAX_SECTIONS) arr = arr.slice(0, SW_ATTN_MAX_SECTIONS);
+            var dwell = (typeof dwellNow === 'number') ? dwellNow : lastDwell;
+            return { sections: arr, topSection: top, topKey: topKey, deepestSection: deep,
+                     dwell_ms: dwell, attributed_ms: total,
+                     unattributed_ms: (typeof dwell === 'number') ? Math.max(0, dwell - total) : null };
         },
-        _state: function () { return { secs: secs, activeLabel: activeLabel, activeStart: activeStart, lastActivity: lastActivity, visible: visible }; }
+        _state: function () { return { secs: secs, shares: shares, lastDwell: lastDwell }; }
+    };
+}
+
+// Tab-time core (pure): which tab was open while reading time accrued.
+function createTabCore() {
+    var tabs = {}, open = {}, lastDwell = null;
+    return {
+        sample: function (dwellMs, openTabs) {   // openTabs: [{ key, group, idx, text }] for tablists on screen
+            if (typeof dwellMs === 'number' && lastDwell != null && dwellMs > lastDwell) {
+                var d = dwellMs - lastDwell;
+                for (var k in open) if (open.hasOwnProperty(k) && tabs[k]) tabs[k].engaged += d;
+            }
+            if (typeof dwellMs === 'number' && (lastDwell == null || dwellMs > lastDwell)) lastDwell = dwellMs;
+            open = {};
+            for (var i = 0; i < (openTabs || []).length; i++) {
+                var t = openTabs[i];
+                if (!tabs[t.key]) tabs[t.key] = { key: t.key, group: t.group, idx: t.idx, text: t.text, engaged: 0 };
+                open[t.key] = true;
+            }
+        },
+        value: function (dwellNow) {
+            var live = (typeof dwellNow === 'number' && lastDwell != null && dwellNow > lastDwell) ? dwellNow - lastDwell : 0;
+            var out = [];
+            for (var k in tabs) {
+                if (!tabs.hasOwnProperty(k)) continue;
+                var e = Math.floor(tabs[k].engaged + (open[k] ? live : 0));
+                if (e > 0) out.push({ key: k, group: tabs[k].group, idx: tabs[k].idx, tab: tabs[k].text, engaged_dwell_ms: e });
+            }
+            return out;
+        }
     };
 }
 
 // ---- browser shell --------------------------------------------------------
-var _swAttnCore = null;
-var _swAttnObserver = null;
-var _swAttnIdleTimer = null;
-var _swAttnWired = false;
+var _swAttnCore = null, _swTabCore = null;
+var _swAttnRegions = [];          // [{ key, el }]
+var _swAttnSeen = [];             // heading elements already registered
+var _swAttnCounts = {};
+var _swAttnJumps = [];
+var _swAttnWired = false, _swAttnTimer = null, _swAttnTick = null, _swAttnRescanDone = false;
 
 function _swAttnEnabled() {
     try { return (typeof window === 'undefined') ? false : (window.__SW_JOURNEY_ENABLED !== false); }
     catch (e) { return false; }
 }
-function _swAttnActivity() {
-    if (!_swAttnCore) return;
-    _swAttnCore.onActivity(Date.now());
-    if (_swAttnIdleTimer) clearTimeout(_swAttnIdleTimer);
-    _swAttnIdleTimer = setTimeout(function () { if (_swAttnCore) _swAttnCore.onIdle(); }, SW_ATTN_IDLE_MS);
+function _swAttnDwell(now) {
+    try { return (typeof getDwellMs === 'function') ? getDwellMs(now) : null; } catch (e) { return null; }
+}
+function _swAttnPageCtx() {
+    var path = (typeof window !== 'undefined' && window.location) ? window.location.pathname : '/';
+    var r = (typeof swResolvePage === 'function') ? swResolvePage(path) : null;
+    var e = (r && r.e) ? r.e : null;
+    return {
+        off: !!(e && e.auto === false && !e.tpl),
+        template: (e && e.tpl) ? e.tpl : 'generic',
+        overrides: (e && e.ovr) ? e.ovr : [],
+        clinicians: (typeof clinicianTokens === 'function' && typeof CLINICIAN_BY_PATH !== 'undefined') ? clinicianTokens(CLINICIAN_BY_PATH) : []
+    };
 }
 function _swAttnHeadings() {
+    var out = [];
     try {
-        var nodes = document.querySelectorAll('h1, h2, h3');
-        var out = [];
+        var nodes = document.querySelectorAll('h1, h2, h3, h4');
         for (var i = 0; i < nodes.length; i++) {
             var t = (nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
-            if (t) out.push({ el: nodes[i], text: t });
-        }
-        return out;
-    } catch (e) { return []; }
-}
-// Walk up to a reasonable section container for a heading (bounded), else the heading.
-function _swAttnContainer(el) {
-    try {
-        var cur = el, hops = 0;
-        while (cur && cur.parentElement && hops < 4) {
-            var tag = (cur.parentElement.tagName || '').toLowerCase();
-            if (tag === 'section' || (cur.parentElement.getAttribute && cur.parentElement.getAttribute('role') === 'region')) return cur.parentElement;
-            cur = cur.parentElement; hops++;
+            if (!t) continue;
+            var a = nodes[i].closest ? nodes[i].closest('a') : null;
+            var href = a ? (a.getAttribute('href') || '') : '';
+            out.push({ el: nodes[i], text: t, level: parseInt(nodes[i].tagName.charAt(1), 10) || 2,
+                       inPostLink: /\/post\//.test(href), inHashLink: _swAttnIsSamePageHash(href) });
         }
     } catch (e) {}
-    return el;
+    return out;
 }
-
-// Resolve the label->element observe targets for the current page (Path C, then
-// Path-B heading fallback). Returns [{label, el}].
-function _swAttnResolveTargets() {
-    var targets = [];
-    var used = {};
-    var path = (typeof window !== 'undefined' && window.location) ? window.location.pathname : '/';
-    var clin = (typeof CLINICIAN_BY_PATH !== 'undefined') ? CLINICIAN_BY_PATH : null;
-    var mapped = (typeof resolveSectionsForPath === 'function') ? resolveSectionsForPath(path, clin) : null;
-    var headings = _swAttnHeadings();
-
-    if (mapped && mapped.labels) {
-        for (var i = 0; i < mapped.labels.length; i++) {
-            var label = mapped.labels[i];
-            for (var j = 0; j < headings.length; j++) {
-                if (typeof labelMatchesHeading === 'function' && labelMatchesHeading(label, headings[j].text)) {
-                    targets.push({ label: label, el: _swAttnContainer(headings[j].el) });
-                    used[label] = true;
-                    break;
+function _swAttnIsSamePageHash(href) {
+    if (!href || href.indexOf('#') < 0) return false;
+    try {
+        var u = new URL(href, window.location.href);
+        return u.origin === window.location.origin && u.pathname === window.location.pathname && !!u.hash;
+    } catch (e) { return false; }
+}
+// A heading's region: the widest ancestor that holds no OTHER heading (so regions are
+// disjoint by construction), falling back to the last ancestor with real area (feed
+// cards sit in zero-height wrappers; measured on /ocd 2026-10-26).
+function _swAttnRegionOf(el, all) {
+    var cur = el, lastNZ = el, hops = 0;
+    try {
+        while (cur && cur.parentElement && hops < 12) {
+            var par = cur.parentElement, tag = (par.tagName || '').toLowerCase();
+            if (tag === 'body' || tag === 'main' || tag === 'html') break;
+            var other = false;
+            for (var i = 0; i < all.length; i++) if (all[i] !== el && par.contains(all[i])) { other = true; break; }
+            if (other) break;
+            cur = par; hops++;
+            var b = cur.getBoundingClientRect();
+            if (b.width * b.height > 0) lastNZ = cur;
+        }
+    } catch (e) {}
+    return lastNZ;
+}
+function _swAttnScan() {
+    var ctx = _swAttnPageCtx();
+    if (ctx.off) return;
+    var heads = _swAttnHeadings(), fresh = [], els = [];
+    for (var i = 0; i < heads.length; i++) {
+        els.push(heads[i].el);
+        if (_swAttnSeen.indexOf(heads[i].el) < 0) fresh.push(heads[i]);
+    }
+    if (!fresh.length || typeof classifyHeadings !== 'function') return;
+    var recs = classifyHeadings(fresh, { template: ctx.template, overrides: ctx.overrides, clinicians: ctx.clinicians, startCounts: _swAttnCounts });
+    _swAttnCounts = recs.counts || _swAttnCounts;
+    for (var j = 0; j < recs.length; j++) {
+        var h = fresh[recs[j].i];
+        _swAttnSeen.push(h.el);
+        var meta = { key: recs[j].key, label: recs[j].label, n: recs[j].n, group: recs[j].group };
+        if (recs[j].treat) meta.treat = recs[j].treat;
+        if (recs[j].clin) meta.clin = recs[j].clin;
+        if (recs[j].heading) meta.heading = recs[j].heading;
+        _swAttnCore.register(meta);
+        _swAttnRegions.push({ key: meta.key, el: _swAttnRegionOf(h.el, els) });
+    }
+}
+function _swAttnOpenTabs() {
+    var out = [];
+    try {
+        var lists = document.querySelectorAll('[role=tablist]');
+        var vh = window.innerHeight || 0;
+        for (var g = 0; g < lists.length; g++) {
+            var b = lists[g].getBoundingClientRect();
+            var panelBottom = b.bottom;
+            var tabs = lists[g].querySelectorAll('[role=tab]');
+            for (var t = 0; t < tabs.length; t++) {
+                if (tabs[t].getAttribute('aria-selected') !== 'true') continue;
+                var pid = tabs[t].getAttribute('aria-controls');
+                var panel = pid ? document.getElementById(pid) : null;
+                if (panel) panelBottom = Math.max(panelBottom, panel.getBoundingClientRect().bottom);
+                if (b.top < vh && panelBottom > 0) {
+                    out.push({ key: 'tab_' + (g + 1) + '_' + (t + 1), group: g + 1, idx: t + 1,
+                               text: (tabs[t].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40) });
                 }
             }
         }
-    }
-    // Path-B fallback: if no mapped label resolved to a heading, auto-section by heading.
-    if (!targets.length && typeof autoSectionsFromHeadings === 'function') {
-        var texts = [];
-        for (var k = 0; k < headings.length; k++) texts.push(headings[k].text);
-        var autos = autoSectionsFromHeadings(texts);
-        for (var a = 0; a < autos.length; a++) {
-            // find the heading whose text produced this auto-section
-            for (var h = 0; h < headings.length; h++) {
-                if (headings[h].text === autos[a].headingText) {
-                    targets.push({ label: autos[a].label, el: _swAttnContainer(headings[h].el) });
-                    break;
-                }
-            }
+    } catch (e) {}
+    return out;
+}
+function _swAttnSample() {
+    if (!_swAttnCore) return;
+    try {
+        var now = Date.now(), dwell = _swAttnDwell(now);
+        var vp = { w: window.innerWidth || 0, h: window.innerHeight || 0 };
+        var rects = [];
+        for (var i = 0; i < _swAttnRegions.length; i++) {
+            var b = _swAttnRegions[i].el.getBoundingClientRect();
+            rects.push({ key: _swAttnRegions[i].key, x: b.left, y: b.top, w: b.width, h: b.height });
         }
-    }
-    return targets;
+        var obs = (typeof computeShares === 'function') ? computeShares(rects, vp) : {};
+        _swAttnCore.sample(dwell, obs, now);
+        if (_swTabCore) _swTabCore.sample(dwell, _swAttnOpenTabs());
+    } catch (e) {}
+}
+function _swAttnSchedule() {
+    if (_swAttnTimer) return;
+    _swAttnTimer = setTimeout(function () { _swAttnTimer = null; _swAttnSample(); }, 200);
+}
+function _swAttnOnClick(e) {
+    try {
+        var a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (!_swAttnIsSamePageHash(href)) return;
+        _swAttnSample();
+        if (_swAttnJumps.length < SW_ATTN_MAX_JUMPS) {
+            _swAttnJumps.push({ to: new URL(href, window.location.href).hash.slice(0, 40), ts: Date.now() });
+        }
+        setTimeout(_swAttnSample, 600);   // after the jump lands
+    } catch (e2) {}
 }
 
 function initAttention() {
     if (!_swAttnEnabled()) return;
     try {
-        if (typeof document === 'undefined' || typeof IntersectionObserver === 'undefined') return;
-        _swAttnCore = createAttentionCore(SW_ATTN_IDLE_MS, SW_ATTN_ENTER_PCT);
-        var now = Date.now();
-        var vis = (document.visibilityState) ? (document.visibilityState === 'visible') : true;
-        if (vis) _swAttnCore.onVisible(now); else _swAttnCore.onHidden(now);
-
-        var targets = _swAttnResolveTargets();
-        if (targets.length) {
-            var byEl = [];
-            _swAttnObserver = new IntersectionObserver(function (entries) {
-                if (!_swAttnCore) return;
-                for (var e = 0; e < entries.length; e++) {
-                    var label = null;
-                    for (var t = 0; t < byEl.length; t++) if (byEl[t].el === entries[e].target) { label = byEl[t].label; break; }
-                    if (label) _swAttnCore.onSectionVisibility(label, (entries[e].intersectionRatio || 0) * 100, Date.now());
-                }
-            }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
-            for (var i = 0; i < targets.length; i++) {
-                if (targets[i].el) { byEl.push(targets[i]); try { _swAttnObserver.observe(targets[i].el); } catch (e2) {} }
-            }
-        }
-
+        if (typeof document === 'undefined') return;
+        _swAttnCore = createAttentionCore(SW_ATTN_ENTER_PCT);
+        _swTabCore = createTabCore();
+        _swAttnRegions = []; _swAttnSeen = []; _swAttnCounts = {}; _swAttnJumps = []; _swAttnRescanDone = false;
+        _swAttnScan();
+        _swAttnSample();
+        setTimeout(function () {
+            if (_swAttnRescanDone) return;
+            _swAttnRescanDone = true;
+            _swAttnSample(); _swAttnScan(); _swAttnSample();
+        }, SW_ATTN_RESCAN_MS);
+        if (_swAttnTick) clearInterval(_swAttnTick);
+        _swAttnTick = setInterval(function () {
+            if (document.visibilityState === 'hidden') return;
+            _swAttnSample();
+        }, SW_ATTN_TICK_MS);
         if (!_swAttnWired) {
             _swAttnWired = true;
-            document.addEventListener('visibilitychange', function () {
-                if (!_swAttnCore) return;
-                if (document.visibilityState === 'hidden') _swAttnCore.onHidden(Date.now());
-                else _swAttnCore.onVisible(Date.now());
-            });
-            if (typeof window !== 'undefined') {
-                window.addEventListener('blur',  function () { if (_swAttnCore) _swAttnCore.onHidden(Date.now()); });
-                window.addEventListener('focus', function () { if (_swAttnCore) _swAttnCore.onVisible(Date.now()); });
-                var ev = ['scroll', 'mousemove', 'keydown', 'touchstart', 'click'];
-                for (var m = 0; m < ev.length; m++) {
-                    try { window.addEventListener(ev[m], _swAttnActivity, { passive: true }); }
-                    catch (e3) { window.addEventListener(ev[m], _swAttnActivity, false); }
-                }
-            }
+            window.addEventListener('scroll', _swAttnSchedule, { passive: true });
+            window.addEventListener('resize', _swAttnSchedule, { passive: true });
+            document.addEventListener('visibilitychange', _swAttnSample);
+            document.addEventListener('click', _swAttnOnClick, true);
         }
-        _swAttnActivity();
     } catch (e) { _swAttnCore = null; }
 }
 
@@ -2098,16 +2223,34 @@ function initAttention() {
 function getAttentionResult(now) {
     try {
         if (!_swAttnCore) return null;
-        var r = _swAttnCore.value(typeof now === 'number' ? now : Date.now());
+        _swAttnSample();
+        var t = (typeof now === 'number') ? now : Date.now();
+        var r = _swAttnCore.value(_swAttnDwell(t));
         return (r && r.sections && r.sections.length) ? r.sections : null;
     } catch (e) { return null; }
 }
 
-// Rich snapshot incl. rollups (topSection/deepestSection) -- used by tests + any
-// consumer that wants the rollups without decoding the array.
+// Rich snapshot incl. rollups and the honest unattributed remainder.
 function getAttentionRich(now) {
-    try { return _swAttnCore ? _swAttnCore.value(typeof now === 'number' ? now : Date.now()) : null; }
-    catch (e) { return null; }
+    try {
+        if (!_swAttnCore) return null;
+        var t = (typeof now === 'number') ? now : Date.now();
+        return _swAttnCore.value(_swAttnDwell(t));
+    } catch (e) { return null; }
+}
+
+// Page-level attention metadata for the breadcrumb entry (pulled by finalizeEntry).
+function getAttentionMeta(now) {
+    try {
+        if (!_swAttnCore) return null;
+        var t = (typeof now === 'number') ? now : Date.now();
+        var d = _swAttnDwell(t);
+        var r = _swAttnCore.value(d);
+        var tabs = _swTabCore ? _swTabCore.value(d) : [];
+        return { v: (typeof SW_SECTIONS_MAP_VERSION !== 'undefined') ? SW_SECTIONS_MAP_VERSION : null,
+                 attributed_ms: r.attributed_ms, unattributed_ms: r.unattributed_ms,
+                 tabs: tabs.length ? tabs : null, jumps: _swAttnJumps.length ? _swAttnJumps.slice() : null };
+    } catch (e) { return null; }
 }
 
     // ====== sw-post-tagging ======
@@ -3269,6 +3412,57 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
     return applied;
 }
 
+// ----- LCI-W1 (Review row 17): credit a treatment only when its card was READ ---
+// A service page used to credit ONE fixed modality per visit (/ocd -> erp) although
+// it presents seven or more. Now each treatment card that received at least the
+// floor of reading time credits its own modality, once per page visit (sw-journey
+// marks the entry). Card keys come from SW_TREATMENTS in sw-sections-map.js
+// (Kiesa-gated vocabulary). Keys outside MODALITIES (e.g. executive_function_coaching)
+// are recorded on the page but credit no ledger.
+// SW_TREATMENT_CREDIT_FLOOR_MS is an UNCALIBRATED starting value for Ryan and Kiesa.
+const SW_TREATMENT_CREDIT_FLOOR_MS = 5000;
+
+function buildTreatmentCredits(sections, cfg, vocab, floorMs) {
+    const c = cfg || DEFAULT_FEED_CONFIG;
+    const V = vocab || { MODALITIES: MODALITIES };
+    const floor = (typeof floorMs === 'number' && floorMs >= 0) ? floorMs : SW_TREATMENT_CREDIT_FLOOR_MS;
+    const read = {};
+    for (let i = 0; i < (sections || []).length; i++) {
+        const s = sections[i];
+        if (!s || !s.treat) continue;
+        read[s.treat] = (read[s.treat] || 0) + (Number(s.engaged_dwell_ms) || 0);
+    }
+    const out = [];
+    Object.keys(read).sort().forEach(function (t) {
+        if (read[t] < floor || !inVocab(t, V.MODALITIES)) return;
+        out.push({ op: 'updateScore', ledger: 'modality', key: t, points: c.modality_points.service_page, source: 'treatment_card_read' });
+        out.push({ op: 'addDistinct', countKey: 'modalities_count', value: t });
+    });
+    return out;
+}
+
+// `already` = treatment keys this page visit has already credited. finalizeEntry runs
+// on EVERY hide, so a key is credited the first time its reading crosses the floor and
+// never again in the same visit (a 2 s tab-away no longer forfeits the later reading).
+// Returns { applied, credited } where credited lists the keys newly credited.
+function applyTreatmentCredits(sections, cfg, prims, floorMs, already) {
+    var P = prims || { updateScore: updateScore, addDistinct: addDistinct };
+    var skip = Array.isArray(already) ? already : [];
+    var feeds = buildTreatmentCredits(sections, cfg, null, floorMs).filter(function (f) {
+        return skip.indexOf(f.op === 'updateScore' ? f.key : f.value) < 0;
+    });
+    var applied = 0, credited = [];
+    for (var i = 0; i < feeds.length; i++) {
+        try {
+            if (feeds[i].op === 'updateScore') { P.updateScore(feeds[i].ledger, feeds[i].key, feeds[i].points); applied++; credited.push(feeds[i].key); }
+            else if (feeds[i].op === 'addDistinct') { P.addDistinct(feeds[i].countKey, feeds[i].value); applied++; }
+        } catch (e) {
+            if (typeof console !== 'undefined') console.warn('[sw] treatment credit failed:', feeds[i] && feeds[i].op, e);
+        }
+    }
+    return { applied: applied, credited: credited };
+}
+
     // ====== sw-lead-fields ======
 // ============================================================================
 // sw-lead-fields.js  —  WS-A / A3  Per-form DOM field-selector map  (BW1-A)
@@ -3939,6 +4133,9 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
             profile._captureWarnings = captured.captureWarnings.slice();
         }
 
+        // LCI-W1: never POST a body the ingest server or fetch keepalive would refuse.
+        profile = fitPayloadBudget(profile, SW_LEAD_MAX_BYTES).profile;
+
         return profile;
     }
 
@@ -4010,9 +4207,94 @@ function applyLedgerFeeds(sig, cfg, prims, storage) {
         return s.length > 254 ? s.slice(0, 254) : s;
     }
 
+    // ---- LCI-W1 (2026-10-26): lead-payload size guard ----------------------
+    // The ingest server rejects a body over 64 KB with 413 and browsers cap fetch
+    // keepalive bodies at 64 KB, so an oversized profile loses the WHOLE lead. Trim in
+    // order of least value, and record what was trimmed in profileJson.payloadTrim:
+    //   1. heading text on generic sections (descriptive only)
+    //   2. breadcrumb copies of sections, oldest page first (the lead server reads the
+    //      perPageTelemetry copy, so the objection signal is kept)
+    //   3. perPageTelemetry sections under 1 s, then the oldest pages' section lists
+    //      (page rollups, incl. topSection, are kept)
+    //   4. last resort: breadcrumb entries from the SECOND-oldest on. The first entry is
+    //      the visitor's true entry (the SFC pilot scoreboard reads it for returning
+    //      leads) and the newest is the converting page: both are always kept.
+    //   5. then perPageTelemetry page rollups the same way (first and newest kept)
+    // The trim record itself is counted: every size check runs against the budget minus
+    // SW_LEAD_TRIM_RESERVE, so adding payloadTrim can never push the body over maxBytes.
+    var SW_LEAD_MAX_BYTES = 56 * 1024;
+    var SW_LEAD_TRIM_RESERVE = 320;
+    function _payloadBytes(o) {
+        try {
+            var s = JSON.stringify(o);
+            if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length;
+            return unescape(encodeURIComponent(s)).length;
+        } catch (x) { return Infinity; }
+    }
+    function fitPayloadBudget(profile, maxBytes) {
+        maxBytes = (typeof maxBytes === 'number' && maxBytes > 0) ? maxBytes : SW_LEAD_MAX_BYTES;
+        var before = _payloadBytes(profile);
+        if (before <= maxBytes || !profile || !profile.profileJson) {
+            return { profile: profile, trimmed: false, before: before, after: before };
+        }
+        var pj = profile.profileJson;
+        var bc = Array.isArray(pj.journeyBreadcrumb) ? pj.journeyBreadcrumb : [];
+        var pages = (pj.perPageTelemetry && Array.isArray(pj.perPageTelemetry.pages)) ? pj.perPageTelemetry.pages : [];
+        var steps = [];
+        var room = Math.max(0, maxBytes - SW_LEAD_TRIM_RESERVE);
+        function fits() { return _payloadBytes(profile) <= room; }
+        function eachSection(fn) {
+            for (var i = 0; i < bc.length; i++) if (bc[i] && Array.isArray(bc[i].sections)) bc[i].sections.forEach(fn);
+            for (var j = 0; j < pages.length; j++) if (pages[j] && Array.isArray(pages[j].sections)) pages[j].sections.forEach(fn);
+        }
+        var nh = 0;
+        eachSection(function (s) { if (s && s.heading != null) { delete s.heading; nh++; } });
+        if (nh) steps.push('headings:' + nh);
+        if (!fits()) {
+            var nb = 0;
+            for (var i = 0; i < bc.length && !fits(); i++) if (bc[i] && bc[i].sections) { delete bc[i].sections; nb++; }
+            if (nb) steps.push('breadcrumb_sections:' + nb);
+        }
+        if (!fits()) {
+            var ns = 0;
+            for (var j = 0; j < pages.length; j++) {
+                if (!pages[j] || !Array.isArray(pages[j].sections)) continue;
+                var kept = pages[j].sections.filter(function (s) { return s && (s.engaged_dwell_ms || 0) >= 1000; });
+                ns += pages[j].sections.length - kept.length;
+                pages[j].sections = kept.length ? kept : null;
+            }
+            if (ns) steps.push('short_sections:' + ns);
+        }
+        if (!fits()) {
+            var np = 0;
+            for (var k = 0; k < pages.length && !fits(); k++) if (pages[k] && pages[k].sections) { pages[k].sections = null; np++; }
+            if (np) steps.push('page_sections:' + np);
+        }
+        if (!fits()) {
+            var ne = 0;
+            while (!fits() && bc.length > 2) { bc.splice(1, 1); ne++; }
+            if (ne) steps.push('breadcrumb_entries:' + ne);
+        }
+        if (!fits()) {
+            var nr = 0;
+            while (!fits() && pages.length > 2) { pages.splice(1, 1); nr++; }
+            if (nr) steps.push('page_rollups:' + nr);
+        }
+        // after is part of the body it measures: settle it (digit count changes at most twice)
+        pj.payloadTrim = { before: before, max: maxBytes, steps: steps, after: 0 };
+        var after = _payloadBytes(profile);
+        for (var g = 0; g < 3 && pj.payloadTrim.after !== after; g++) {
+            pj.payloadTrim.after = after;
+            after = _payloadBytes(profile);
+        }
+        return { profile: profile, trimmed: true, before: before, after: after, steps: steps };
+    }
+
     return {
         assembleLeadProfile: assembleLeadProfile,
         SCHEMA_VERSION: SCHEMA_VERSION,
+        fitPayloadBudget: fitPayloadBudget,
+        SW_LEAD_MAX_BYTES: SW_LEAD_MAX_BYTES,
         _internal: { makeEnv: makeEnv, K: K, defaultUuid: _defaultUuid, normEmail: _normEmail }
     };
 });
