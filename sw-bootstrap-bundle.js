@@ -660,6 +660,7 @@ let __sw_page_ready_ts = 0;
 let __sw_cta_view_starts = null;
 let __sw_cta_view_accums = null;
 let __sw_cta_intersection_observer = null;
+let __sw_cta_observed = null;   // GTM-W2: elements already handed to the observer
 
 const CTA_TEXT_PATTERN = /\b(book\s*now|book\s*online|schedule|get\s*started|contact\s*us|book\s*(an\s*)?appointment|sign\s*up|join\s*(now|us)|start\s*here)\b/i;
 const CTA_HREF_PATTERN = /\/(contact|booking|book|schedule|signup|apply|appointment)(\b|\/|$)/i;
@@ -675,6 +676,7 @@ function initClickContext() {
         __sw_cta_view_starts = new WeakMap();
         __sw_cta_view_accums = new WeakMap();
     }
+    if (typeof WeakSet !== 'undefined') __sw_cta_observed = new WeakSet();
 
     if (typeof IntersectionObserver !== 'undefined' && __sw_cta_view_starts) {
         __sw_cta_intersection_observer = new IntersectionObserver(function (entries) {
@@ -695,22 +697,37 @@ function initClickContext() {
             });
         }, { threshold: 0.5 });
         __sw_observeCtaCandidates();
-        // Re-scan for late-hydrated Wix CTAs every 2s for first 10s
-        let scans = 0;
-        const interval = setInterval(function () {
-            __sw_observeCtaCandidates();
-            if (++scans >= 5) clearInterval(interval);
-        }, 2000);
+        // Re-scan for late-hydrated Wix CTAs. GTM-W2: was every 2 s for the first 10 s only;
+        // now on a widening schedule out to 120 s. Each pass skips elements already observed.
+        CTA_RESCAN_SCHEDULE_MS.forEach(function (ms) {
+            setTimeout(__sw_observeCtaCandidates, ms);
+        });
     }
 
     document.addEventListener('click', __sw_handleClickEvent, true);
 }
 
+// GTM-W2 (2026-10-27): observe what the CLASSIFIER accepts, never a separate selector.
+// The old selector 'a.wixui-button, a[class*="button"], button, [data-cta-label]' could not
+// match an in-article Ricos prose link (no button class), so every in-article CTA was never
+// observed and cta_viewport_time_seconds read 0 for exactly the CTAs the program measures.
+// Candidates are the same 'a, button' set the click handler resolves via closest(); the
+// predicate is __sw_classifyCta itself, so observation and classification cannot drift apart.
+const CTA_OBSERVE_SELECTOR = 'a, button';
+const CTA_RESCAN_SCHEDULE_MS = [2000, 4000, 6000, 8000, 10000, 15000, 20000, 30000, 45000, 60000, 90000, 120000];
+
 function __sw_observeCtaCandidates() {
     if (!__sw_cta_intersection_observer || typeof document === 'undefined') return;
-    const candidates = document.querySelectorAll('a.wixui-button, a[class*="button"], button, [data-cta-label]');
+    const candidates = document.querySelectorAll(CTA_OBSERVE_SELECTOR);
     candidates.forEach(function (el) {
-        try { __sw_cta_intersection_observer.observe(el); } catch (e) { /* already observed */ }
+        if (__sw_cta_observed && __sw_cta_observed.has(el)) return;
+        let cta = null;
+        try { cta = __sw_classifyCta(el); } catch (e) { cta = null; }
+        if (!cta) return;
+        try {
+            __sw_cta_intersection_observer.observe(el);
+            if (__sw_cta_observed) __sw_cta_observed.add(el);
+        } catch (e) { /* never crash the page */ }
     });
 }
 
@@ -853,10 +870,13 @@ function __sw_handleClickEvent(ev) {
     try {
         const el = ev.target && ev.target.closest && ev.target.closest('a, button');
         const cta = el ? __sw_classifyCta(el) : null;
+        // GTM-W2: read the PRIOR count before this click increments it. The old order
+        // (increment, then push) made prior_cta_clicks_in_session count the current click.
+        const prior = __sw_getPriorCtaClicksInSession();
         __sw_pushClickContext(el, cta);
         if (cta) {
             __sw_incrementCtaClicksInSession();
-            __sw_pushCtaClick(el, cta);
+            __sw_pushCtaClick(el, cta, prior);
         }
     } catch (e) { /* never crash the page */ }
 }
@@ -880,7 +900,7 @@ function __sw_pushClickContext(el, cta) {
     window.dataLayer.push(payload);
 }
 
-function __sw_pushCtaClick(el, cta) {
+function __sw_pushCtaClick(el, cta, prior) {
     if (typeof window === 'undefined') return;
     sw_push('cta_click', {
         cta_label: cta.label || '',
@@ -888,7 +908,7 @@ function __sw_pushCtaClick(el, cta) {
         cta_variant: cta.variant || '',
         cta_position_percent: __sw_getCtaPositionPercent(el),
         cta_viewport_time_seconds: __sw_getCtaViewportTimeSeconds(el),
-        prior_cta_clicks_in_session: __sw_getPriorCtaClicksInSession(),
+        prior_cta_clicks_in_session: prior,
         scroll_at_click: __sw_getScrollAtClickPercent(),
         time_on_page_seconds: __sw_getTimeOnPageSeconds(),
         // BCI-W3 (2026-09-02): chrome CTAs are kept and flagged, never dropped
